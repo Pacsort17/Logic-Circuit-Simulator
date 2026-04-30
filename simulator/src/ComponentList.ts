@@ -3,10 +3,14 @@ import { CustomComponent } from "./components/CustomComponent"
 import { DrawZIndex } from "./drawutils"
 import { ArrayFillUsing, isString } from "./utils"
 
+export type ComponentListChangeReason = "structure" | "metadata" | "value"
+type ComponentListChangeListener = (reason: ComponentListChangeReason) => void
+
 export class ComponentList {
 
     private _componentsByZIndex = ArrayFillUsing(() => [] as Component[], 3)
     private _componentsById = new Map<string, Component>()
+    private readonly _changeListeners = new Set<ComponentListChangeListener>()
 
     public *all() {
         for (const compList of this._componentsByZIndex) {
@@ -47,6 +51,18 @@ export class ComponentList {
             this._componentsById.set(idForOldComp, oldComp)
         }
         this._componentsById.set(id, comp)
+        this.notifyChangeListeners()
+    }
+
+    public addChangeListener(listener: ComponentListChangeListener): () => void {
+        this._changeListeners.add(listener)
+        return () => this._changeListeners.delete(listener)
+    }
+
+    public notifyChangeListeners(reason: ComponentListChangeReason = "structure") {
+        for (const listener of this._changeListeners) {
+            listener(reason)
+        }
     }
 
     public contains(type: string): boolean {
@@ -176,14 +192,22 @@ export class ComponentList {
             }
         }
 
+        if (deletedComps.length > 0) {
+            this.notifyChangeListeners()
+        }
+
         return deletedComps
     }
 
     public clearAll() {
+        const hadComponents = this._componentsById.size > 0
         for (const compList of this._componentsByZIndex) {
             compList.length = 0
         }
         this._componentsById.clear()
+        if (hadComponents) {
+            this.notifyChangeListeners()
+        }
     }
 
     public boundingRect(): DOMRectReadOnly {

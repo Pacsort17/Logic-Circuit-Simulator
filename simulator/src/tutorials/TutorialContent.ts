@@ -8,6 +8,7 @@ export type TutorialContentBlock =
     | TutorialImageBlock
     | TutorialCustomBlock
     | TutorialTruthTableBlock
+    | TutorialDoubleTruthTableBlock
 
 export class TutorialParagraphBlock {
     public readonly type = "paragraph"
@@ -39,8 +40,20 @@ export class TutorialTruthTableBlock {
     public readonly type = "truthTable"
 
     public constructor(
-        public readonly headers: string[],
+        public readonly headers: readonly string[] | (() => readonly string[]),
         public readonly rows: () => TutorialTruthTableCell[][],
+    ) { }
+}
+
+export class TutorialDoubleTruthTableBlock {
+    public readonly type = "doubleTruthTable"
+
+    public constructor(
+        public readonly dynamicHeaders: readonly string[] | (() => readonly string[]),
+        public readonly dynamicRows: () => TutorialTruthTableCell[][],
+        public readonly referenceHeaders: readonly string[] | (() => readonly string[]),
+        public readonly referenceRows: () => TutorialTruthTableCell[][],
+        public readonly dynamicHighlightedRowIndex?: () => number | undefined,
     ) { }
 }
 
@@ -93,19 +106,50 @@ export class TutorialContent {
             case "truthTable": {
                 const wrapper = div(cls("tutorial-content-block tutorial-truth-table-block")).render()
                 const renderTruthTable = () => {
+                    const headers = typeof block.headers === "function" ? block.headers() : block.headers
                     wrapper.innerHTML = ""
-                    wrapper.appendChild(table(cls("tutorial-truth-table"),
-                        thead(tr(...block.headers.map(header => th(header)))),
-                        tbody(...block.rows().map(row =>
-                            tr(...row.map(cell => td(this.formatTruthTableCell(cell))))
-                        )),
-                    ).render())
+                    wrapper.appendChild(this.renderTruthTable(headers, block.rows()))
                 }
                 renderTruthTable()
                 this.refreshDynamicBlocks.push(renderTruthTable)
                 return wrapper
             }
+
+            case "doubleTruthTable": {
+                const wrapper = div(cls("tutorial-content-block tutorial-double-truth-table-block")).render()
+                const renderTruthTables = () => {
+                    const dynamicHeaders = typeof block.dynamicHeaders === "function" ? block.dynamicHeaders() : block.dynamicHeaders
+                    const referenceHeaders = typeof block.referenceHeaders === "function" ? block.referenceHeaders() : block.referenceHeaders
+                    wrapper.innerHTML = ""
+                    wrapper.appendChild(div(cls("tutorial-double-truth-table"),
+                        div(cls("tutorial-truth-table-panel"),
+                            div(cls("tutorial-truth-table-title"), "Simulation"),
+                            this.renderTruthTable(dynamicHeaders, block.dynamicRows(), block.dynamicHighlightedRowIndex?.()),
+                        ),
+                        div(cls("tutorial-truth-table-spacer")),
+                        div(cls("tutorial-truth-table-panel"),
+                            div(cls("tutorial-truth-table-title"), "Référence"),
+                            this.renderTruthTable(referenceHeaders, block.referenceRows()),
+                        ),
+                    ).render())
+                }
+                renderTruthTables()
+                this.refreshDynamicBlocks.push(renderTruthTables)
+                return wrapper
+            }
         }
+    }
+
+    private renderTruthTable(headers: readonly string[], rows: TutorialTruthTableCell[][], highlightedRowIndex?: number): HTMLTableElement {
+        return table(cls("tutorial-truth-table"),
+            thead(tr(...headers.map(header => th(header)))),
+            tbody(...rows.map((row, rowIndex) =>
+                tr(
+                    rowIndex === highlightedRowIndex ? cls("tutorial-truth-table-current-row") : "",
+                    ...row.map(cell => td(this.formatTruthTableCell(cell)))
+                )
+            )),
+        ).render()
     }
 
     private formatTruthTableCell(cell: TutorialTruthTableCell): string {

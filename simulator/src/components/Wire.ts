@@ -967,6 +967,8 @@ export class Ribbon extends Drawable {
 /**
  * Manages links between components, i.e., wires and ribbons, and the anchor being set.
  */
+type LinkManagerChangeListener = () => void
+
 export class LinkManager {
 
     public readonly parent: DrawableParent
@@ -974,6 +976,7 @@ export class LinkManager {
     // wires and ribbons
     private readonly _wires: Wire[] = []
     private readonly _ribbons: Ribbon[] = []
+    private readonly _changeListeners = new Set<LinkManagerChangeListener>()
     private _wireBeingAddedFrom: Node | undefined = undefined
 
     // anchors
@@ -989,6 +992,11 @@ export class LinkManager {
 
     public get ribbons(): readonly Ribbon[] {
         return this._ribbons
+    }
+
+    public addChangeListener(listener: LinkManagerChangeListener): () => void {
+        this._changeListeners.add(listener)
+        return () => this._changeListeners.delete(listener)
     }
 
     public get isAddingWire() {
@@ -1080,14 +1088,19 @@ export class LinkManager {
 
     private removeDeadWires() {
         let i = 0
+        let didRemoveWire = false
         while (i < this._wires.length) {
             const wire = this._wires[i]
             if (!wire.isAlive) {
                 wire.destroy()
                 this._wires.splice(i, 1)
+                didRemoveWire = true
             } else {
                 i++
             }
+        }
+        if (didRemoveWire) {
+            this.notifyChangeListeners()
         }
     }
 
@@ -1105,6 +1118,7 @@ export class LinkManager {
         this.parent.ifEditing?.setToolCursor(null)
         this.parent.ifEditing?.setDirty("added wire")
         this.parent.ifEditing?.redrawMgr.requestRedraw({ why: "wire added", invalidateMask: true, invalidateTests: true })
+        this.notifyChangeListeners()
         return wire
     }
 
@@ -1356,6 +1370,7 @@ export class LinkManager {
         // remove wire from array
         this._wires.splice(this._wires.indexOf(wire), 1)
         this.parent.ifEditing?.redrawMgr.requestRedraw({ why: "wire deleted", invalidateMask: true, invalidateTests: true })
+        this.notifyChangeListeners()
         return true
     }
 
@@ -1367,11 +1382,21 @@ export class LinkManager {
 
     public clearAll() {
         // TODO clear ribbons
+        const hadWires = this._wires.length > 0
         for (const wire of this._wires) {
             wire.destroy()
         }
         this._wires.length = 0
         this.parent.ifEditing?.redrawMgr.requestRedraw({ why: "all wires deleted", invalidateMask: true, invalidateTests: true })
+        if (hadWires) {
+            this.notifyChangeListeners()
+        }
+    }
+
+    private notifyChangeListeners() {
+        for (const listener of this._changeListeners) {
+            listener()
+        }
     }
 
 }

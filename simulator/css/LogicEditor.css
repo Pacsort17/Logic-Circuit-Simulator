@@ -805,6 +805,8 @@ svg text {
   padding-right: 10px;
   padding-top: 5px;
   padding-bottom: 10px;
+  cursor: move;
+  user-select: none;
 }
 
 .tutorial-title {
@@ -854,12 +856,63 @@ svg text {
   opacity: 0.75;
 }
 
+.tutorial-checklist {
+  margin: 0 20px 12px 20px;
+  padding: 10px 12px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.35);
+}
+
+.tutorial-checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.tutorial-checklist-item:last-child {
+  margin-bottom: 0;
+}
+
+.tutorial-checklist-checkbox {
+  flex: none;
+  cursor: pointer;
+}
+
+.tutorial-checklist-checkbox-auto {
+  accent-color: #2f9e44;
+}
+
+.tutorial-checklist-checkbox-manual {
+  accent-color: #f2c94c;
+}
+
+.tutorial-checklist-checkbox-auto + .tutorial-checklist-label {
+  color: #2f7d32;
+}
+
+.tutorial-checklist-checkbox-manual + .tutorial-checklist-label {
+  color: #8a6d00;
+}
+
+.tutorial-checklist-label {
+  line-height: 1.25;
+}
+
 .tutorial-actions {
   display: flex;
   width: 100%;
   padding: 5px;
-  justify-content: space-between;
   align-items: center;
+  gap: 8px;
+}
+
+.tutorial-page-counter {
+  flex: 1;
+  text-align: center;
+  font-size: 85%;
+  opacity: 0.75;
 }
 
 .tutorial-next-button {
@@ -867,7 +920,6 @@ svg text {
   border-radius: 4px;
   padding: 3px 8px;
   cursor: pointer;
-  margin-left: auto;
 }
 
 .tutorial-next-button:disabled {
@@ -880,7 +932,6 @@ svg text {
   border-radius: 4px;
   padding: 3px 8px;
   cursor: pointer;
-  margin-right: auto;
 }
 
 .tutorial-previous-button:disabled {
@@ -894,9 +945,39 @@ svg text {
   text-align: center;
 }
 
+.tutorial-double-truth-table {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.tutorial-truth-table-panel {
+  text-align: center;
+}
+
+.tutorial-truth-table-spacer {
+  width: 24px;
+  flex: none;
+}
+
+.tutorial-truth-table-title {
+  margin-bottom: 6px;
+  font-size: 85%;
+  font-weight: bold;
+  opacity: 0.8;
+}
+
 .tutorial-truth-table th,
 .tutorial-truth-table td {
   border: 1px solid rgba(127, 127, 127, 0.6);
   background-color: rgba(255, 255, 255, 0.6);
   padding: 4px 10px;
+}
+
+.tutorial-truth-table th {
+  background-color: rgba(127, 127, 127, 0.35);
+}
+
+.tutorial-truth-table-current-row td {
+  background-color: #ffe680;
 }

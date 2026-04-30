@@ -219,6 +219,7 @@ export abstract class InputBase<
     public doSetName(name: ComponentName) {
         this._name = name
         this.requestRedraw({ why: "name changed" })
+        this.parent.components.notifyChangeListeners("metadata")
     }
 
     protected override makeComponentSpecificContextMenuItems(): MenuItems {
@@ -442,6 +443,7 @@ export class Input extends InputBase<InputRepr> {
         const newValues = [...this.value]
         newValues[i] = v
         this.doSetValue(newValues)
+        this.parent.components.notifyChangeListeners("value")
     }
 
     public setValue(values: LogicValue[]) {

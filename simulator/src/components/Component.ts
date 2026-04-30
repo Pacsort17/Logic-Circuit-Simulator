@@ -413,6 +413,7 @@ export abstract class ComponentBase<
     public setSpawned() {
         this._state = ComponentState.SPAWNED
         this.parent.ifEditing?.moveMgr.setDrawableStoppedMoving(this)
+        this.parent.components.notifyChangeListeners()
     }
 
     public setInvalid() {
@@ -1277,6 +1278,7 @@ export abstract class ComponentBase<
         let wasSpawning = false
         if (this._state === ComponentState.SPAWNING) {
             this._state = ComponentState.SPAWNED
+            this.parent.components.notifyChangeListeners()
             wasSpawning = true
         }
         const wasMoving = super.pointerUp(e).isChange
