@@ -38,8 +38,7 @@ import { Modifier, a, attr, attrBuilder, cls, div, emptyMod, href, input, label,
 import { makeIcon } from "./images"
 import { DefaultLang, S, getLang, isLang, setLang } from "./strings"
 import { Any, InBrowser, KeysOfByType, LogicValue, UIDisplay, copyToClipboard, deepArrayEquals, formatString, getURLParameter, isArray, isEmbeddedInIframe, isFalsyString, isRecord, isString, isTruthyString, onVisible, pasteFromClipboard, randomString, setDisplay, setVisible, showModal, toggleVisible, validateJson, valuesFromReprForInput } from "./utils"
-
-
+import { TutorialPalette } from "./tutorials/TutorialPalette"
 
 enum Mode {
     STATIC,  // cannot interact in any way
@@ -251,6 +250,10 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     private _editorRoot: DrawableParent = this
     /** Either the LogicEditor itself, or a CustomComponent, whichever is being edited right now. */
     public get editorRoot() { return this._editorRoot }
+
+    /** Tutorial palette */
+    private _tutorialPalette: TutorialPalette | undefined = undefined
+    private _tutorialPaletteVisible: boolean = false
 
     public root: ShadowRoot
     public readonly html: {
@@ -776,8 +779,12 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         this._topBar = new TopBar(this)
         this._menu = new ComponentMenu(this, this.html.leftToolbar)
         this._messageBar = new MessageBar(this)
+        
         const testResultsPalette = this.elemWithId("testResultsPalette")
         testResultsPalette.parentElement!.replaceChild(this.editTools.testsPalette.rootElem, testResultsPalette)
+
+        /** Tutorial */
+        this._tutorialPalette = new TutorialPalette(this)
 
         // TODO move this to the Def of LabelRect to be cleaner
         const groupButton = this.html.leftToolbar.querySelector("button.sim-component-button[data-type=rect]")
@@ -2008,6 +2015,12 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         }
         const filename = this.documentDisplayName + extension
         saveAs(blob, filename)
+    }
+
+    public setTutorialPaletteVisible(visible: boolean) {
+        this._tutorialPaletteVisible = visible
+        this._tutorialPalette?.setVisible(visible)
+        this._topBar?.updateTutorialPaletteVisible(visible)
     }
 
     public setTestsPaletteVisible(visible: boolean) {

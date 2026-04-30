@@ -223,6 +223,7 @@ const Strings_fr = {
         Move: tuple("Déplacer", "Déplace tout le circuit"),
 
         Tests: tuple("Tests", "Montre les tests pour ce circuit"),
+        Tutorial: tuple("Tutoriel", "Affiche le tutoriel"),
     },
     Messages: {
         UnsupportedFileType: template("Type de fichier non pris en charge: ${type}."),
@@ -1028,6 +1029,7 @@ const Strings_en: Strings = {
         Move: tuple("Move", "Move the whole circuit"),
 
         Tests: tuple("Tests", "Show tests for the circuit"),
+        Tutorial: tuple("Tutorial", "Show the tutorial"),
     },
     Messages: {
         UnsupportedFileType: template("Unsupported file type: ${type}."),

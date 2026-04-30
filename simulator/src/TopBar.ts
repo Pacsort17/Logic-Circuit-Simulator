@@ -49,6 +49,8 @@ export class TopBar {
     private readonly moveButton: HTMLButtonElement
     private readonly zoomLevelInput: HTMLInputElement
 
+    private readonly tutorialButton: HTMLButtonElement
+
     public constructor(
         public readonly editor: LogicEditor,
     ) {
@@ -131,6 +133,9 @@ export class TopBar {
             this.zoomLevelInput, S.Settings.zoomLevelField[1]
         ))
 
+        this.tutorialButton = this.makeButtonWithLabel("tutorial", s.Tutorial,
+            () => this.editor.setTutorialPaletteVisible(!this.tutorialButton.classList.contains("active")))
+
         this.root =
             div(cls("topBar"), style("flex:none; height: 30px; padding: 3px 5px; display: flex; align-items: stretch;"),
                 this.circuitNameGroup,
@@ -156,9 +161,11 @@ export class TopBar {
                 this.makeSep(true),
                 this.designButton,
                 this.deleteButton,
+                
 
                 this.makeSep(),
                 this.testsButton,
+                this.tutorialButton,
 
                 this.flexibleSep,
 
@@ -413,6 +420,9 @@ export class TopBar {
         setVisible(this.testsButton, visible)
     }
 
+    public updateTutorialPaletteVisible(visible: boolean) {
+        this.tutorialButton.classList.toggle("active", visible)
+    }
 
     // Factory methods
 

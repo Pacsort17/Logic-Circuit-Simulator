@@ -785,3 +785,118 @@ svg text {
 .dark .testcase-wrongvalue {
   color: #ff9898;
 }
+
+/* Tutorial */
+
+.tutorial-palette {
+  position: absolute;
+  top: 50px;
+  right: 200px;
+  max-width: 500px;
+  padding: 10px;
+  z-index: 13;
+}
+
+.tutorial-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-left: 10px;
+  padding-right: 10px;
+  padding-top: 5px;
+  padding-bottom: 10px;
+}
+
+.tutorial-title {
+  position: relative;
+  min-width: max-content;
+  font-weight: bold;
+  font-size: 110%;
+}
+
+.tutorial-close {
+  position: relative;
+  padding-left: 30px;
+  cursor: pointer;
+}
+
+.tutorial-content {
+  line-height: 1.35;
+  padding: 20px;
+}
+
+.tutorial-content-block {
+  margin-bottom: 12px;
+}
+
+.tutorial-content-block:last-child {
+  margin-bottom: 0;
+}
+
+.tutorial-paragraph {
+  max-width: 360px;
+}
+
+.tutorial-image-block {
+  text-align: center;
+}
+
+.tutorial-image {
+  display: block;
+  max-width: 30%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.tutorial-image-caption {
+  margin-top: 4px;
+  font-size: 80%;
+  opacity: 0.75;
+}
+
+.tutorial-actions {
+  display: flex;
+  width: 100%;
+  padding: 5px;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tutorial-next-button {
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.tutorial-next-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.tutorial-previous-button {
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.tutorial-previous-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.tutorial-truth-table {
+  border-collapse: collapse;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.tutorial-truth-table th,
+.tutorial-truth-table td {
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  background-color: rgba(255, 255, 255, 0.6);
+  padding: 4px 10px;
+}

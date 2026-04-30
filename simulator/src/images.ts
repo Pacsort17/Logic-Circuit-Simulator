@@ -50,6 +50,8 @@ import strokewidth from '../img/icons/strokewidth.icon.svg'; // @ts-ignore
 import testcase from '../img/icons/testcase.icon.svg'; // @ts-ignore
 import timer from '../img/icons/timer.icon.svg'; // @ts-ignore
 import trash from '../img/icons/trash.icon.svg'; // @ts-ignore
+// TODO : CHANGE THIS ICON
+import tutorial from '../img/icons/download.icon.svg'; // @ts-ignore
 import undo from '../img/icons/undo.icon.svg'; // @ts-ignore
 import wirestyle from '../img/icons/wirestyle.icon.svg'; // @ts-ignore
 
@@ -174,6 +176,7 @@ const icons = {
     testcase,
     timer,
     trash,
+    tutorial,
     undo,
     wirestyle,
 }
