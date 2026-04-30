@@ -1,10 +1,10 @@
 import * as t from "io-ts"
-import { COLOR_BACKGROUND, COLOR_COMPONENT_BORDER, GRID_STEP, INPUT_OUTPUT_DIAMETER, circle, colorForLogicValue, distSquared, drawComponentName, drawValueText, drawValueTextCentered, drawWireLineToComponent, isTrivialNodeName, triangle, useCompact } from "../drawutils"
+import { COLOR_BACKGROUND, COLOR_COMPONENT_BORDER, COMPONENT_OUTLINE_THICKNESS, GRID_STEP, INPUT_OUTPUT_DIAMETER, circle, colorForLogicValue, distSquared, drawComponentName, drawValueText, drawValueTextCentered, drawWireLineToComponent, isTrivialNodeName, triangle, useCompact } from "../drawutils"
 import { mods, tooltipContent } from "../htmlgen"
 import { S } from "../strings"
-import { ArrayFillWith, ComponentTypeOutput, LogicValue, Mode, Unknown, reprForLogicValues, toLogicValueRepr, typeOrUndefined } from "../utils"
+import { ArrayFillWith, ComponentTypeOutput, LogicValue, Mode, Orientation, Unknown, reprForLogicValues, toLogicValueRepr, typeOrUndefined } from "../utils"
 import { Component, ComponentName, ComponentNameRepr, ParametrizedComponentBase, Repr, ResolvedParams, defineParametrizedComponent, groupVertical } from "./Component"
-import { DrawContext, DrawableParent, GraphicsRendering, MenuData, MenuItems, Orientation } from "./Drawable"
+import { DrawContext, DrawableParent, GraphicsRendering, MenuData, MenuItems, PointerOverMode } from "./Drawable"
 import { InputDef } from "./Input"
 import { Node, NodeIn, NodeOut } from "./Node"
 
@@ -146,7 +146,7 @@ export class Output extends ParametrizedComponentBase<OutputRepr> {
         const displayValues = this.parent.editor.options.hideOutputColors ? ArrayFillWith(Unknown, this.numBits) : this.value
 
         // cells
-        const drawMouseOver = ctx.isMouseOver && this.parent.mode !== Mode.STATIC
+        const drawMouseOver = ctx.pointerOver !== PointerOverMode.None && this.parent.mode !== Mode.STATIC
         g.strokeStyle = drawMouseOver ? ctx.borderColor : COLOR_COMPONENT_BORDER
         g.lineWidth = 1
         const cellHeight = useCompact(this.numBits) ? GRID_STEP : 2 * GRID_STEP
@@ -160,7 +160,7 @@ export class Output extends ParametrizedComponentBase<OutputRepr> {
         }
 
         // outline
-        g.lineWidth = 3
+        g.lineWidth = COMPONENT_OUTLINE_THICKNESS
         g.stroke(outline)
 
         // labels

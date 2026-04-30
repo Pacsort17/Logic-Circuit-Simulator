@@ -1,9 +1,9 @@
 import * as t from "io-ts"
-import { COLOR_BACKGROUND, COLOR_COMPONENT_BORDER, COLOR_DARK_RED, COLOR_GATE_NAMES, COLOR_MOUSE_OVER, COLOR_UNKNOWN, ColorString, GRID_STEP, PATTERN_STRIPED_GRAY, TextVAlign, circle, drawWireLineToComponent, fillTextVAlign, useCompact } from "../drawutils"
+import { COLOR_BACKGROUND, COLOR_COMPONENT_BORDER, COLOR_DARK_RED, COLOR_GATE_NAMES, COLOR_MOUSE_OVER, COLOR_UNKNOWN, COMPONENT_OUTLINE_THICKNESS, ColorString, GRID_STEP, PATTERN_STRIPED_GRAY, TextVAlign, circle, drawWireLineToComponent, fillTextVAlign, useCompact } from "../drawutils"
 import { Modifier, ModifierObject, asValue, b, cls, div, emptyMod, mods, table, tbody, td, th, thead, tooltipContent, tr } from "../htmlgen"
 import { S } from "../strings"
 import { ArrayFillUsing, Expand, InteractionResult, LogicValue, Mode, RichStringEnum, Unknown, deepArrayEquals, isUnknown, typeOrUndefined } from "../utils"
-import { ExtractParamDefs, ExtractParams, InstantiatedComponentDef, NodesIn, NodesOut, ParametrizedComponentBase, Repr, ResolvedParams, SomeParamCompDef, defineParametrizedComponent, groupVertical, param } from "./Component"
+import { ExtractParamDefs, ExtractParams, InstantiatedComponentDef, NodesIn, NodesOut, ParametrizedComponentBase, Repr, ResolvedParams, SomeParametrizedComponentDef, defineParametrizedComponent, groupVertical, param } from "./Component"
 import { DrawContext, DrawableParent, GraphicsRendering, MenuData, MenuItem, MenuItems } from "./Drawable"
 import { Gate1Type, Gate1TypeRepr, Gate1Types, Gate2OnlyTypes, Gate2toNTypes, GateNType, GateNTypeRepr, GateNTypes, GateTypes } from "./GateTypes"
 
@@ -11,6 +11,7 @@ type GateRepr = Gate1Repr | GateNRepr
 
 const LEAD_LENGTH_NORMAL = 20
 const LEAD_LENGTH_OR_STYLE = 25
+const LEAD_LENGTH_XRAY_SHORTENING = 15
 
 export abstract class GateBase<
     TRepr extends GateRepr,
@@ -27,14 +28,16 @@ export abstract class GateBase<
 > {
 
     public abstract get numBits(): number
+    protected readonly _isXRay: boolean // needed for lead length adjustment
     private _type: TGateType
     private _poseAs: TGateType | undefined
     private _showAsUnknown: boolean
 
-    protected constructor(parent: DrawableParent, SubclassDef: [InstantiatedComponentDef<TRepr, LogicValue>, SomeParamCompDef<TParamDefs>], type: TGateType, saved?: TRepr) {
+    protected constructor(parent: DrawableParent, SubclassDef: [InstantiatedComponentDef<TRepr, LogicValue>, SomeParametrizedComponentDef<TParamDefs>], isXRay: boolean, type: TGateType, saved?: TRepr) {
         super(parent, SubclassDef, saved)
 
         this._type = type
+        this._isXRay = isXRay
         // this.updateLeadsFor(type) // done in subclass after it can set numBits
         this._poseAs = saved?.poseAs as TGateType ?? undefined
         this._showAsUnknown = saved?.showAsUnknown ?? false
@@ -70,7 +73,7 @@ export abstract class GateBase<
 
     protected updateLeadsFor(type: TGateType) {
         const isOrStyle = type === "or" || type === "nor" || type === "imply" || type === "rimply"
-        const leadLength = isOrStyle ? LEAD_LENGTH_OR_STYLE : LEAD_LENGTH_NORMAL
+        const leadLength = (isOrStyle ? LEAD_LENGTH_OR_STYLE : LEAD_LENGTH_NORMAL) - (this._isXRay ? LEAD_LENGTH_XRAY_SHORTENING : 0)
         const ins = this.inputs.In
         ins.forEach(node => node.updateLeadLength(leadLength))
         // very empirical way to make the gates look better
@@ -222,7 +225,7 @@ export abstract class GateBase<
         }
 
         const showAsFake = isFake && this.parent.mode >= Mode.FULL
-        const gateBorderColor: ColorString = ctx.isMouseOver ? COLOR_MOUSE_OVER : (showAsFake ? COLOR_DARK_RED : COLOR_COMPONENT_BORDER)
+        const gateBorderColor: ColorString = ctx.isPointerOver ? COLOR_MOUSE_OVER : (showAsFake ? COLOR_DARK_RED : COLOR_COMPONENT_BORDER)
         const gateFill = showAsFake ? PATTERN_STRIPED_GRAY : COLOR_BACKGROUND
 
         // inputs and output
@@ -232,7 +235,7 @@ export abstract class GateBase<
         drawWireLineToComponent(g, output)
 
         // prepare main fill
-        g.lineWidth = 3
+        g.lineWidth = COMPONENT_OUTLINE_THICKNESS
         g.strokeStyle = gateBorderColor
         g.fillStyle = gateFill
 
@@ -269,7 +272,7 @@ export abstract class GateBase<
                 g.lineWidth = 1
                 g.stroke()
                 g.strokeStyle = gateBorderColor
-                g.lineWidth = 3
+                g.lineWidth = COMPONENT_OUTLINE_THICKNESS
                 g.stroke()
                 g.beginPath()
                 if (type.startsWith("nand")) {
@@ -327,7 +330,7 @@ export abstract class GateBase<
                     drawInversionCircle(left - 2, this.posY + GRID_STEP)
                 }
                 if (type.startsWith("x")) {
-                    g.lineWidth = 3
+                    g.lineWidth = COMPONENT_OUTLINE_THICKNESS
                     const leftXorCurve = (delta: number) => {
                         g.beginPath()
                         if (drawArms) {
@@ -388,7 +391,7 @@ export abstract class GateBase<
 
             case "?": {
                 const gateRightSquare = left + (bottom - top)
-                g.strokeStyle = ctx.isMouseOver ? COLOR_MOUSE_OVER : COLOR_UNKNOWN
+                g.strokeStyle = ctx.isPointerOver ? COLOR_MOUSE_OVER : COLOR_UNKNOWN
                 g.beginPath()
                 g.moveTo(left, top)
                 g.lineTo(gateRightSquare, top)
@@ -562,10 +565,13 @@ export const Gate1Def =
             gridWidth: 4,
             gridHeight: 4,
         }),
-        makeNodes: () => ({
-            ins: { In: [[-4, 0, "w", { leadLength: 20 }]] },
-            outs: { Out: [+4, 0, "e", { leadLength: 20 }] },
-        }),
+        makeNodes: ({ isXRay }) => {
+            const leadLength = LEAD_LENGTH_NORMAL - (isXRay ? LEAD_LENGTH_XRAY_SHORTENING : 0)
+            return {
+                ins: { In: [[isXRay ? -2.5 : -4, 0, "w", { leadLength }]] },
+                outs: { Out: [isXRay ? 2.5 : +4, 0, "e", { leadLength }] },
+            }
+        },
         initialValue: () => false as LogicValue,
     })
 
@@ -578,7 +584,7 @@ export class Gate1 extends GateBase<Gate1Repr> {
     public get numBits() { return 1 }
 
     public constructor(parent: DrawableParent, params: Gate1Params, saved?: Gate1Repr) {
-        super(parent, Gate1Def.with(params), params.type, saved)
+        super(parent, Gate1Def.with(params), params.isXRay, params.type, saved)
     }
 
     protected gateTypes() { return Gate1Types }
@@ -603,7 +609,6 @@ export class Gate1 extends GateBase<Gate1Repr> {
 Gate1Def.impl = Gate1
 
 
-
 export const GateNDef =
     defineParametrizedComponent(GateTypePrefix + "", true, true, {
         variantName: ({ type, bits }) =>
@@ -617,7 +622,7 @@ export const GateNDef =
         },
         valueDefaults: {},
         params: {
-            bits: param(2, [2, 3, 4, 5, 6, 7, 8, 12, 16, 24, 32]),
+            bits: param(2, [2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 24, 32]),
             type: param("and" as GateNType),
         },
         validateParams: ({ type: paramType, bits }, jsonType, defaults) => {
@@ -625,21 +630,18 @@ export const GateNDef =
             return { type, numBits: bits }
         },
         idPrefix: ({ type }) => type,
-        size: ({ numBits }) => {
-            const tall = numBits !== 2 && numBits !== 4 && numBits !== 6
-            return {
-                gridWidth: 4,
-                gridHeight: tall ? 5 : 4,
-            }
-        },
-        makeNodes: ({ numBits }) => {
-            const leadLength = 20
+        size: ({ numBits }) => ({
+            gridWidth: 4,
+            gridHeight: (numBits !== 2 && numBits !== 4 && numBits !== 6) ? 5 : 4,
+        }),
+        makeNodes: ({ isXRay, numBits }) => {
+            const leadLength = LEAD_LENGTH_NORMAL // will be updated dynamically for the inputs
             return {
                 ins: {
-                    In: groupVertical("w", -4, 0, numBits, undefined, { leadLength }),
+                    In: groupVertical("w", isXRay ? -2.5 : -4, 0, numBits, undefined, { leadLength }),
                 },
                 outs: {
-                    Out: [4, 0, "e", { leadLength }],
+                    Out: [isXRay ? 2.5 : 4, 0, "e", { leadLength }],
                 },
             }
         },
@@ -654,7 +656,7 @@ export class GateN extends GateBase<GateNRepr> {
     public readonly numBits: number
 
     public constructor(parent: DrawableParent, params: GateNParams, saved?: GateNRepr) {
-        super(parent, GateNDef.with(params), params.type, saved)
+        super(parent, GateNDef.with(params), params.isXRay, params.type, saved)
         this.numBits = params.numBits
         this.updateLeadsFor(params.type)
     }
@@ -668,6 +670,10 @@ export class GateN extends GateBase<GateNRepr> {
             ...this.toJSONBase(),
             bits: this.numBits !== GateNDef.aults.bits ? this.numBits : undefined,
         }
+    }
+
+    public get in() {
+        return this.inputs.In
     }
 
     public override pointerDoubleClicked(e: PointerEvent) {
@@ -704,8 +710,14 @@ export class GateN extends GateBase<GateNRepr> {
     protected override makeComponentSpecificContextMenuItems(): MenuItems {
         const s = S.Components.Generic.contextMenu
 
+        const makeSwapInputsItem = (): MenuItem =>
+            MenuData.item("swap", s.SwapInputs, () => {
+                this.parent.linkMgr.swapWires(this.inputs.In[0], this.inputs.In[1])
+            })
+
         const changeBitsItems: MenuItems = Gate2OnlyTypes.includes(this.type) ? [] : [
             this.makeChangeParamsContextMenuItem("inputs", s.ParamNumInputs, this.numBits, "bits"),
+            ["mid", makeSwapInputsItem()],
             ["mid", MenuData.sep()],
         ]
 
@@ -750,3 +762,5 @@ function makeGateTooltip(numBits: number, title: Modifier, description: Modifier
     const maxWidth = 200 + (Math.max(0, numBitsDisplay - 2)) * 50
     return tooltipContent(title, mods(div(description), div(explanationAndTable)), maxWidth)
 }
+
+export type Gate = Gate1 | GateN

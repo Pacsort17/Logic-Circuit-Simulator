@@ -1,11 +1,11 @@
 import * as t from "io-ts"
-import { COLOR_BACKGROUND, COLOR_COMPONENT_BORDER, GRID_STEP, INPUT_OUTPUT_DIAMETER, circle, colorForLogicValue, distSquared, drawComponentName, drawValueText, drawValueTextCentered, drawWireLineToComponent, inRect, isTrivialNodeName, triangle, useCompact } from "../drawutils"
+import { COLOR_BACKGROUND, COLOR_COMPONENT_BORDER, COMPONENT_OUTLINE_THICKNESS, GRID_STEP, INPUT_OUTPUT_DIAMETER, circle, colorForLogicValue, distSquared, drawComponentName, drawValueText, drawValueTextCentered, drawWireLineToComponent, inRect, isTrivialNodeName, triangle, useCompact } from "../drawutils"
 import { mods, tooltipContent } from "../htmlgen"
 import { S } from "../strings"
-import { ArrayFillWith, ComponentTypeInput, HighImpedance, InputOutputValueRepr, InteractionResult, LogicValue, Mode, Unknown, reprForLogicValues, toLogicValueRepr, typeOrUndefined, valuesFromReprForInput } from "../utils"
+import { ArrayFillWith, ComponentTypeInput, HighImpedance, InputOutputValueRepr, InteractionResult, LogicValue, Mode, Orientation, Unknown, reprForLogicValues, toLogicValueRepr, typeOrUndefined, valuesFromReprForInput } from "../utils"
 import { ClockDef, ClockRepr } from "./Clock"
-import { Component, ComponentName, ComponentNameRepr, ExtractParamDefs, ExtractParams, InstantiatedComponentDef, NodesIn, NodesOut, ParametrizedComponentBase, Repr, ResolvedParams, SomeParamCompDef, defineParametrizedComponent, groupVertical, param } from "./Component"
-import { DrawContext, DrawableParent, GraphicsRendering, MenuData, MenuItems, Orientation } from "./Drawable"
+import { Component, ComponentName, ComponentNameRepr, ExtractParamDefs, ExtractParams, InstantiatedComponentDef, NodesIn, NodesOut, ParametrizedComponentBase, Repr, ResolvedParams, SomeParametrizedComponentDef, defineParametrizedComponent, groupVertical, param } from "./Component"
+import { DrawContext, DrawableParent, GraphicsRendering, MenuData, MenuItems, PointerOverMode } from "./Drawable"
 import { Node, NodeIn, NodeOut } from "./Node"
 
 
@@ -28,7 +28,7 @@ export abstract class InputBase<
     public abstract get numBits(): number
     protected _name: ComponentName
 
-    protected constructor(parent: DrawableParent, SubclassDef: [InstantiatedComponentDef<TRepr, LogicValue[]>, SomeParamCompDef<TParamDefs>], saved?: TRepr) {
+    protected constructor(parent: DrawableParent, SubclassDef: [InstantiatedComponentDef<TRepr, LogicValue[]>, SomeParametrizedComponentDef<TParamDefs>], saved?: TRepr) {
         super(parent, SubclassDef, saved)
         this._name = saved?.name ?? undefined
     }
@@ -84,7 +84,7 @@ export abstract class InputBase<
 
         const shouldDrawBorder = this.shouldDrawBorder()
         if (shouldDrawBorder) {
-            const drawMouseOver = ctx.isMouseOver && this.parent.mode !== Mode.STATIC
+            const drawMouseOver = ctx.pointerOver !== PointerOverMode.None && this.parent.mode !== Mode.STATIC
 
             if (drawMouseOver) {
                 g.strokeStyle = ctx.borderColor
@@ -93,7 +93,7 @@ export abstract class InputBase<
                 g.strokeStyle = COLOR_COMPONENT_BORDER
                 g.fillStyle = COLOR_COMPONENT_BORDER
             }
-            g.lineWidth = 3
+            g.lineWidth = COMPONENT_OUTLINE_THICKNESS
             g.beginPath()
             const triangleLeft = this.posX + INPUT_OUTPUT_DIAMETER / 2 - 1
             const triangleRight = this.posX + INPUT_OUTPUT_DIAMETER / 2 + 5
@@ -142,7 +142,7 @@ export abstract class InputBase<
             ? ArrayFillWith(Unknown, this.numBits) : this.value
 
         // cells
-        const drawMouseOver = ctx.isMouseOver && this.parent.mode !== Mode.STATIC
+        const drawMouseOver = ctx.pointerOver !== PointerOverMode.None && this.parent.mode !== Mode.STATIC
         g.strokeStyle = drawMouseOver ? ctx.borderColor : COLOR_COMPONENT_BORDER
         g.lineWidth = 1
         const cellHeight = useCompact(this.numBits) ? GRID_STEP : 2 * GRID_STEP
@@ -156,7 +156,7 @@ export abstract class InputBase<
         }
 
         // outline
-        g.lineWidth = 3
+        g.lineWidth = COMPONENT_OUTLINE_THICKNESS
         g.stroke(outline)
 
         // labels
@@ -255,7 +255,7 @@ export const InputDef =
             isConstant: false,
         },
         params: {
-            bits: param(1, [1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 24, 32]),
+            bits: param(1, [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 24, 32]),
         },
         validateParams: ({ bits }) => ({
             numBits: bits,
@@ -270,9 +270,9 @@ export const InputDef =
                 gridHeight: useCompact(numBits) ? numBits : 2 * numBits,
             }
         },
-        makeNodes: ({ numBits }) => ({
+        makeNodes: ({ numBits, isXRay }) => ({
             outs: {
-                Out: groupVertical("e", numBits === 1 ? 3 : 2, 0, numBits, undefined, { hasTriangle: numBits !== 1 }),
+                Out: groupVertical("e", (numBits === 1 ? 3 : 2) - (isXRay ? 1 : 0), 0, numBits, undefined, { hasTriangle: numBits !== 1 }),
             },
         }),
         initialValue: (saved, { numBits }) => {
@@ -459,7 +459,7 @@ export class Input extends InputBase<InputRepr> {
         }
     }
 
-    private doSetIsConstant(isConstant: boolean) {
+    public doSetIsConstant(isConstant: boolean) {
         this._isConstant = isConstant
         this.requestRedraw({ why: "constant changed" })
     }

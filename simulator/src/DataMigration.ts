@@ -1,7 +1,7 @@
 import { Serialization } from "./Serialization"
-import { binaryStringRepr, isAllZeros, isArray, isRecord, isString, toLogicValue } from "./utils"
+import { binaryStringRepr, isAllZeros, isArray, isNumber, isRecord, isString, Orientation, Orientations, toLogicValue } from "./utils"
 
-export const CurrentFormatVersion = 7
+export const CurrentFormatVersion = 8
 
 export function migrateData(data: Record<string, unknown>, editorId: string | undefined) {
 
@@ -10,7 +10,7 @@ export function migrateData(data: Record<string, unknown>, editorId: string | un
     let jsonVersion = Number(data.v ?? 0)
     const savedVersion = jsonVersion
     if (savedVersion > CurrentFormatVersion) {
-        throw new Error(`Data format v${savedVersion} is newer than what this editor can load (v ≤ ${CurrentFormatVersion}`)
+        throw new Error(`Data format v${savedVersion} is newer than what this editor can load (v ≤ ${CurrentFormatVersion})`)
     }
     while (jsonVersion < CurrentFormatVersion) {
         const migrationFunc = migrateTo[++jsonVersion]
@@ -33,7 +33,7 @@ export function migrateData(data: Record<string, unknown>, editorId: string | un
     }
     if (jsonVersion !== savedVersion) {
         const newRepr = Serialization.stringifyObject(data, false)
-        const editorIdStr = editorId !== undefined ? ` for editor '${editorId}'` : ""
+        const editorIdStr = editorId !== undefined ? ` with ID '${editorId}'` : ""
         console.log(`LogicEditor${editorIdStr} migrated data format from v${savedVersion} to v${jsonVersion}, consider upgrading its source to this:\n${newRepr}`)
         // console.log("WAS:\n" + initialRepr)
     }
@@ -42,6 +42,37 @@ export function migrateData(data: Record<string, unknown>, editorId: string | un
 // Migration functions
 
 const migrateTo: Record<number, (container: Record<string, unknown>) => void> = {
+
+    8: (container) => {
+        let nextNewId = findFirstFreeId(container)
+
+        migrateAllComponentListsOfV6Plus(container, comp => {
+            // adder-array has one more output
+            if (comp.type === "adder-array") {
+                const outArray = isArray(comp.out) ? comp.out : [comp.out]
+                outArray.push(nextNewId++) // add a new Overflow output
+                comp.out = outArray
+            }
+
+            // adder changed orientation
+            if (comp.type === "adder") {
+                const orient = Orientations.includes(comp.orient) ? comp.orient : Orientation.default
+                const newOrient = Orientation.nextClockwise(orient)
+                comp.orient = newOrient
+            }
+
+            // adder and comp has switched A and B
+            if (comp.type === "adder" || comp.type === "comp") {
+                const inIds = parseNodeIds(comp.in)
+                if (inIds !== undefined && inIds.length >= 2) {
+                    const t = inIds[0]
+                    inIds[0] = inIds[1]
+                    inIds[1] = t
+                    comp.in = inIds
+                }
+            }
+        })
+    },
 
     7: (container) => {
         // dec-bcd4 is now dec-bcd with bits=4
@@ -409,7 +440,7 @@ function findFirstFreeId(parsedContents: Record<string, unknown>): number {
 
     let maxId = -1
 
-    function inspectComponentDef(compDef: Record<string, unknown>) {
+    function inspectComponentLine(compDef: Record<string, unknown>) {
         for (const fieldName of ["id", "in", "out"]) {
             inspectValue(compDef[fieldName])
         }
@@ -431,16 +462,17 @@ function findFirstFreeId(parsedContents: Record<string, unknown>): number {
             for (const item of value) {
                 inspectValue(item)
             }
-        } else if (typeof value === "object" && value !== null) {
-            inspectValue((value as Record<string, unknown>).id)
+        } else if (isRecord(value)) {
+            inspectValue(value.id)
         }
     }
 
     for (const jsonField of Object.keys(parsedContents)) {
-        const arr = parsedContents[jsonField]
-        if (arr !== undefined && isArray(arr)) {
+        const value = parsedContents[jsonField]
+        if (value !== undefined) {
+            const arr = isArray(value) ? value : isRecord(value) ? Object.values(value) : []
             for (const comp of arr) {
-                inspectComponentDef(comp)
+                inspectComponentLine(comp)
             }
         }
     }
@@ -473,4 +505,25 @@ function migrateAllComponentListsOfV6Plus(container: Record<string, unknown>, mi
             }
         }
     }
+}
+
+
+function parseNodeIds(idSpec: unknown): number[] | undefined {
+    if (idSpec === null || idSpec === undefined) {
+        return undefined
+    }
+    const ids = []
+
+    for (const spec of (isArray(idSpec) ? idSpec : [idSpec])) {
+        if (isNumber(spec)) {
+            ids.push(spec)
+        } else if (isString(spec)) {
+            const [start, end] = spec.split('-').map(s => parseInt(s))
+            for (let i = start; i <= end; i++) {
+                ids.push(i)
+            }
+        }
+    }
+
+    return ids
 }

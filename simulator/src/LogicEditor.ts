@@ -12,7 +12,8 @@ import * as LZString from "lz-string"
 import * as pngMeta from 'png-metadata-writer'
 import { ComponentFactory } from "./ComponentFactory"
 import { ComponentList } from "./ComponentList"
-import { ComponentMenu } from "./ComponentMenu"
+import { ComponentMenu, getAllComponentTypes } from "./ComponentMenu"
+import { CurrentFormatVersion } from "./DataMigration"
 import { MessageBar } from "./MessageBar"
 import { MoveManager } from "./MoveManager"
 import { NodeManager } from "./NodeManager"
@@ -26,34 +27,28 @@ import { Timeline } from "./Timeline"
 import { TopBar } from "./TopBar"
 import { EditorSelection, PointerDragEvent, UIEventManager } from "./UIEventManager"
 import { UndoManager } from './UndoManager'
-import { Component, ComponentBase } from "./components/Component"
+import { Component, ComponentBase, InjectedParams } from "./components/Component"
 import { CustomComponent } from "./components/CustomComponent"
-import { Drawable, DrawableParent, DrawableWithDraggablePosition, DrawableWithPosition, EditTools, GraphicsRendering, Orientation } from "./components/Drawable"
+import { Drawable, DrawableParent, DrawableWithDraggablePosition, DrawableWithPosition, EditTools, GraphicsRendering } from "./components/Drawable"
 import { type Input } from "./components/Input"
 import { Rectangle, RectangleDef } from "./components/Rectangle"
 import { LinkManager, Wire, WireStyle, WireStyles } from "./components/Wire"
-import { COLOR_BACKGROUND, COLOR_BACKGROUND_UNUSED_REGION, COLOR_BORDER, COLOR_COMPONENT_BORDER, COLOR_COMPONENT_ID, COLOR_GRID_LINES, COLOR_GRID_LINES_GUIDES, DrawZIndex, GRID_STEP, TextVAlign, USER_COLORS, drawAnchorsAroundComponent as drawAnchorsForComponent, fillTextVAlign, isDarkMode, parseColorToRGBA, setDarkMode, strokeSingleLine, strokeTextVAlign } from "./drawutils"
+import { XRay } from "./components/XRay"
+import { COLOR_BACKGROUND, COLOR_BACKGROUND_UNUSED_REGION, COLOR_BORDER, COLOR_COMPONENT_BORDER, COLOR_GRID_LINES, COLOR_GRID_LINES_GUIDES, DrawZIndex, GRID_STEP, TextVAlign, USER_COLORS, XRayMode, drawAnchorsAroundComponent as drawAnchorsForComponent, drawComponentIDs, fillTextVAlign, isDarkMode, parseColorToRGBA, setDarkMode, strokeSingleLine } from "./drawutils"
 import { gallery } from './gallery'
 import { Modifier, a, attr, attrBuilder, cls, div, emptyMod, href, input, label, mods, option, select, setupSvgIcon, span, style, target, title, type } from "./htmlgen"
 import { makeIcon } from "./images"
 import { DefaultLang, S, getLang, isLang, setLang } from "./strings"
-import { Any, InBrowser, KeysOfByType, LogicValue, UIDisplay, copyToClipboard, deepArrayEquals, formatString, getURLParameter, isArray, isEmbeddedInIframe, isFalsyString, isRecord, isString, isTruthyString, onVisible, pasteFromClipboard, randomString, setDisplay, setVisible, showModal, toggleVisible, validateJson, valuesFromReprForInput } from "./utils"
+import { Any, InBrowser, KeysOfByType, LogicValue, Mode, Orientation, ParentType, UIDisplay, copyToClipboard, deepArrayEquals, formatString, getURLParameter, isArray, isEmbeddedInIframe, isFalsyString, isRecord, isString, isTruthyString, onVisible, pasteFromClipboard, randomString, setDisplay, setVisible, showModal, toggleVisible, validateJson, valuesFromReprForInput } from "./utils"
 import { TutorialPalette } from "./tutorials/TutorialPalette"
 
-enum Mode {
-    STATIC,  // cannot interact in any way
-    TRYOUT,  // can change inputs on predefined circuit
-    CONNECT, // can additionnally move preexisting components around and connect them
-    DESIGN,  // can additionally add components from left menu
-    FULL,    // can additionally force output nodes to 'unset' state and draw undetermined dates
-}
-
-const MIN_MODE_INDEX: number = Mode.STATIC
-const MAX_MODE_INDEX: number = Mode.FULL
+const MIN_MODE: number = Mode.STATIC
+const MAX_MODE: number = Mode.FULL
 const MAX_MODE_WHEN_SINGLETON = Mode.FULL
 const MAX_MODE_WHEN_EMBEDDED = Mode.DESIGN
 const DEFAULT_MODE = Mode.DESIGN
 
+const STORAGE_PREFIX = "logic/"
 const SINGLETON_INSTANCE_ID = "_main"
 
 const ATTRIBUTE_NAMES = {
@@ -63,7 +58,10 @@ const ATTRIBUTE_NAMES = {
     id: "id",
     autosave: "autosave", // whether to use localStorage to persist the circuit across page visits
     norestore: "norestore", // to skip restoring from any browser storage
+    noloadsave: "noloadsave", // prevent loading and saving with buttons
     hidereset: "hidereset",
+    hidedirty: "hidedirty", // whether to hide the dirty indicator (dirty events will still be sent)
+    showmodeselector: "showmodeselector", // can be true, false, or auto
     exportformat: "exportformat", // differences between MyST and pymarkdown
     linkedto: "linkedto", // query of an element whose text content should be updated with the circuit state
 
@@ -72,7 +70,8 @@ const ATTRIBUTE_NAMES = {
     showonly: "showonly",
     showgatetypes: "showgatetypes",
     showdisconnectedpins: "showdisconnectedpins",
-    showtooltips: "tooltips",
+    showtooltips: "showtooltips",
+    xray: "xray",
 
     src: "src",
     data: "data",
@@ -99,6 +98,7 @@ const DEFAULT_EDITOR_OPTIONS = {
     hideOutputColors: false,
     hideMemoryContent: false,
     hideTooltips: false,
+    xray: "auto" as XRayMode,
     groupParallelWires: false,
     showHiddenWires: false,
     showAnchors: false,
@@ -149,6 +149,8 @@ export type DrawParams = {
     highlightedItems: HighlightedItems | undefined,
     highlightColor: string | undefined,
     anythingMoving: boolean,
+    currentDrawingScale: number,
+    xrayLevel: number,
 }
 
 export type TestSuiteRunOptions = {
@@ -192,6 +194,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
 
     /// DrawableParent implementation ///
 
+    public get type(): ParentType { return ParentType.MAIN_EDITOR }
     public isMainEditor(): this is LogicEditor { return true }
     public get editor(): LogicEditor { return this }
 
@@ -207,6 +210,8 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     public stopEditingThis() { this._ifEditing = undefined }
     public startEditingThis(tools: EditTools) { this._ifEditing = tools }
 
+    public readonly componentCreationParams: InjectedParams = { isXRay: false }
+
 
     /// Other internal state ///
 
@@ -216,7 +221,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     /** Mirrors the id HTML attribute, is used to preserve the state across a simple reload with sessionStorage */
     private _instanceId: string | undefined = undefined
     public get instanceId() { return this._instanceId }
-    private get persistenceKey() { return this._instanceId === undefined ? undefined : "logic/" + this._instanceId }
+    private get persistenceKey() { return this._instanceId === undefined ? undefined : STORAGE_PREFIX + this._instanceId }
     /** Stores the id used for exporting. This is generated once if we are in the standalone editor, or reused if we are in a populated instance */
     private _idWhenExporting: string | undefined = undefined
     public get idWhenExporting() { if (this._idWhenExporting === undefined) { this._idWhenExporting = randomString(6) } return this._idWhenExporting }
@@ -224,6 +229,8 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     private _autosave: boolean = false
     public get autosave() { return this._autosave }
     private _norestore: boolean = false
+    private _noLoadSave: boolean = false
+    public get noLoadSave() { return this._noLoadSave }
     private _linkedField: HTMLInputElement | HTMLTextAreaElement | undefined = undefined
     private _maxInstanceMode: Mode = MAX_MODE_WHEN_EMBEDDED // can be set later
     private _isDirty = false
@@ -231,10 +238,13 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     private _dontHogFocus = false
     private _mode: Mode = DEFAULT_MODE
     public get mode() { return this._mode }
+    public get modeStr() { return Mode[this._mode].toLowerCase() }
     private _loadedFromStorage: boolean = false
     private _initialData: InitialData | undefined = undefined
     private _options: EditorOptions = { ...DEFAULT_EDITOR_OPTIONS }
     private _hideResetButton = false
+    private _hideDirtyIndicator = false
+    public get hideDirtyIndicator() { return this._hideDirtyIndicator }
     private _exportformat: string | undefined = undefined
 
     private _menu: ComponentMenu | undefined = undefined
@@ -286,6 +296,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         hideOutputColorsCheckbox: HTMLInputElement,
         hideMemoryContentCheckbox: HTMLInputElement,
         hideTooltipsCheckbox: HTMLInputElement,
+        xrayPopup: HTMLSelectElement,
         groupParallelWiresCheckbox: HTMLInputElement,
         showHiddenWiresCheckbox: HTMLInputElement,
         showAnchorsCheckbox: HTMLInputElement,
@@ -382,6 +393,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             optionsHtml.wireStylePopup.value = newOptions.wireStyle
             optionsHtml.showDisconnectedPinsCheckbox.checked = newOptions.showDisconnectedPins
             optionsHtml.hideTooltipsCheckbox.checked = newOptions.hideTooltips
+            optionsHtml.xrayPopup.value = newOptions.xray
             optionsHtml.groupParallelWiresCheckbox.checked = newOptions.groupParallelWires
             optionsHtml.showHiddenWiresCheckbox.checked = newOptions.showHiddenWires
             optionsHtml.showAnchorsCheckbox.checked = newOptions.showAnchors
@@ -548,7 +560,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
                         this.userdata = value
                     } else {
                         key = key[0].toLowerCase() + key.substring(1)
-                        if (typeof this.userdata !== "object") {
+                        if (!isRecord(this.userdata)) {
                             this.userdata = {}
                         }
                         if (key in this.userdata) {
@@ -575,9 +587,9 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             // singletons manage their dark mode according to system settings
             const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)")
             darkModeQuery.onchange = () => {
-                setDarkMode(darkModeQuery.matches, false)
+                setDarkMode(darkModeQuery.matches, false, false)
             }
-            setDarkMode(darkModeQuery.matches, true)
+            setDarkMode(darkModeQuery.matches, true, true)
 
             // reexport some libs
             window.JSON5 = JSON5
@@ -640,6 +652,8 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         const idAttr = this.getAttribute(ATTRIBUTE_NAMES.id)
         const norestoreAttr = this.getAttribute(ATTRIBUTE_NAMES.norestore)
         this._norestore = norestoreAttr !== null && !isFalsyString(norestoreAttr)
+        const noloadsaveAttr = this.getAttribute(ATTRIBUTE_NAMES.noloadsave)
+        this._noLoadSave = noloadsaveAttr !== null && !isFalsyString(noloadsaveAttr)
 
         if (idAttr !== null || this._isSingleton) {
             if (idAttr !== null) {
@@ -699,7 +713,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
 
         const showonlyAttr = this.getAttribute(ATTRIBUTE_NAMES.showonly)
         if (showonlyAttr !== null) {
-            this._options.showOnly = showonlyAttr.toLowerCase().split(/[, +]+/).filter(x => x.trim())
+            this._options.showOnly = this.splitShowOnlyParam(showonlyAttr)
         }
 
         const showgatetypesAttr = this.getAttribute(ATTRIBUTE_NAMES.showgatetypes)
@@ -717,8 +731,16 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             this._options.hideTooltips = !isFalsyString(showtooltipsAttr)
         }
 
-        // TODO move this to options so that it is correctly persisted, too
-        this._hideResetButton = this.getAttribute(ATTRIBUTE_NAMES.hidereset) !== null && !isFalsyString(this.getAttribute(ATTRIBUTE_NAMES.hidereset))
+        const xrayAttr = this.getAttribute(ATTRIBUTE_NAMES.xray)
+        if (xrayAttr !== null) {
+            this._options.xray = xrayAttr as XRayMode
+        }
+
+        const hideresetAttr = this.getAttribute(ATTRIBUTE_NAMES.hidereset)
+        this._hideResetButton = hideresetAttr !== null && !isFalsyString(hideresetAttr)
+
+        const hidedirtyAttr = this.getAttribute(ATTRIBUTE_NAMES.hidedirty)
+        this._hideDirtyIndicator = hidedirtyAttr !== null && !isFalsyString(hidedirtyAttr)
 
         let dataOrSrcRef
         if ((dataOrSrcRef = this.getAttribute(ATTRIBUTE_NAMES.data)) !== null) {
@@ -804,8 +826,6 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         }
 
         this.eventMgr.registerCanvasListenersOn(this.html.mainCanvas)
-
-        this.eventMgr.registerButtonListenersOn(this._menu.allFixedButtons(), false)
 
         this.html.rightResetButton.addEventListener("click", this.wrapHandler(this.resetCircuit.bind(this)))
 
@@ -933,26 +953,48 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         const showHiddenWiresCheckbox = makeCheckbox("showHiddenWires", S.Settings.showHiddenWires)
         const showAnchorsCheckbox = makeCheckbox("showAnchors", S.Settings.showAnchors)
         const showIdsCheckbox = makeCheckbox("showIDs", S.Settings.showIds)
-        // 
+
         const sw = S.Components.Wire.contextMenu
-        const wireStylePopup = select(
-            option(attr("value", WireStyles.auto), sw.WireStyleAuto),
-            option(attr("value", WireStyles.straight), sw.WireStyleStraight),
-            option(attr("value", WireStyles.hv), sw.WireStyleSquareHV),
-            option(attr("value", WireStyles.vh), sw.WireStyleSquareVH),
-            option(attr("value", WireStyles.bezier), sw.WireStyleCurved),
-        ).render()
-        wireStylePopup.addEventListener("change", this.wrapHandler(() => {
-            this._options.wireStyle = wireStylePopup.value as WireStyle
+
+        const makeSelect = <T extends string>(title: String, values: Array<[T, string]>, listener: (value: T) => void) => {
+            const popup = select(
+                ...values.map(([value, caption]) =>
+                    option(attr("value", value), caption),
+                )
+            ).render()
+            popup.addEventListener("change", this.wrapHandler(() => {
+                listener(popup.value as T)
+            }))
+            settingsPalette.appendChild(
+                div(
+                    style("height: 24px"),
+                    title + " ", popup
+                ).render()
+            )
+            return popup
+        }
+
+        const wireStylePopup = makeSelect<WireStyle>(S.Settings.wireStyle, [
+            [WireStyles.auto, sw.WireStyleAuto],
+            [WireStyles.straight, sw.WireStyleStraight],
+            [WireStyles.hv, sw.WireStyleSquareHV],
+            [WireStyles.vh, sw.WireStyleSquareVH],
+            [WireStyles.bezier, sw.WireStyleCurved],
+        ], value => {
+            this._options.wireStyle = value
             this.linkMgr.invalidateAllWirePaths()
             this.editTools.redrawMgr.requestRedraw({ why: "wire style changed", invalidateMask: true })
-        }))
-        settingsPalette.appendChild(
-            div(
-                style("height: 20px"),
-                S.Settings.wireStyle + " ", wireStylePopup
-            ).render()
-        )
+        })
+
+        const xrayPopup = makeSelect<XRayMode>(S.Settings.xrayMode, [
+            ["auto", sw.XRayModeAuto],
+            ["force", sw.XRayModeForce],
+            ["off", sw.XRayModeOff],
+        ], value => {
+            this._options.xray = value
+            this.editTools.redrawMgr.requestRedraw({ why: "xray mode changed", invalidateMask: false })
+        })
+
 
         const propagationDelayField = input(type("number"),
             style("margin: 0 4px; width: 4em"),
@@ -990,6 +1032,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             showGateTypesCheckbox,
             showDisconnectedPinsCheckbox,
             hideTooltipsCheckbox,
+            xrayPopup,
             groupParallelWiresCheckbox,
             showHiddenWiresCheckbox,
             showAnchorsCheckbox,
@@ -1009,7 +1052,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         this.tryLoadCircuitFromData(!this._norestore, PostLoadActions_SnapshotNoStorage)
         // also triggers redraw, should be last thing called here
 
-        this.setModeFromString(this.getAttribute(ATTRIBUTE_NAMES.mode))
+        this.setMode(this.getAttribute(ATTRIBUTE_NAMES.mode))
 
         // this is called a second time here because the canvas width may have changed following the mode change
         this.setCanvasSize()
@@ -1121,7 +1164,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
 
         document.body.addEventListener("themechanged", (e) => {
             const isDark = Boolean((e as any).detail?.is_dark_theme)
-            setDarkMode(isDark, false)
+            setDarkMode(isDark, false, false)
         })
 
         const mkdocsThemeObserver = new MutationObserver(function (mutations) {
@@ -1139,7 +1182,25 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         LogicEditor._globalListenersInstalled = true
     }
 
-    public setMode(mode: Mode, doSetFocus: boolean) {
+    public setModeFromString(modeStr: string | null | undefined, doSetFocus: boolean = false) {
+        // for compatibility reasons
+        this.setMode(modeStr, doSetFocus)
+    }
+
+    public setMode(modeParam: Mode | string | null | undefined, doSetFocus: boolean = false) {
+        let mode: Mode = this._maxInstanceMode
+        if (modeParam === null || modeParam === undefined) {
+            // keep default
+        } else if (isString(modeParam)) {
+            // try to apply it if recognized, otherwise keep default
+            if ((modeParam = modeParam.toUpperCase()) in Mode) {
+                mode = (Mode as any)[modeParam]
+            }
+        } else {
+            // it's the direct mode
+            mode = Math.max(MIN_MODE, Math.min(modeParam, MAX_MODE))
+        }
+
         this.wrapHandler(() => {
             let modeStr = Mode[mode].toLowerCase()
             if (mode > this._maxInstanceMode) {
@@ -1148,14 +1209,15 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
                 modeStr = Mode[mode].toLowerCase()
             }
             this._mode = mode
+            // this.setDirty("mode changed") // this seems too aggressive
 
             const modes: string[] = []
-            for (let i = MIN_MODE_INDEX; i <= mode; i++) {
+            for (let i = MIN_MODE; i <= mode; i++) {
                 modes.push(Mode[i].toLowerCase())
             }
             this.html.rootDiv.setAttribute(ATTRIBUTE_NAMES.modes, modes.join(" "))
             const nomodes: string[] = []
-            for (let i = mode + 1; i <= MAX_MODE_INDEX; i++) {
+            for (let i = mode + 1; i <= MAX_MODE; i++) {
                 nomodes.push(Mode[i].toLowerCase())
             }
             this.html.rootDiv.setAttribute(ATTRIBUTE_NAMES.nomodes, nomodes.join(" "))
@@ -1205,6 +1267,8 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             // const txGateButton = this.root.querySelector("button[data-type=TXA]") as HTMLElement
             // setVisible(txGateButton, showTxGates)
 
+            this.editorRoot.linkMgr.invalidateAllWirePaths() // in case some paths are different
+
             if (doSetFocus) {
                 this.focus()
             }
@@ -1212,12 +1276,28 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         })()
     }
 
-    public setModeFromString(modeStr: string | null) {
-        let mode: Mode = this._maxInstanceMode
-        if (modeStr !== null && (modeStr = modeStr.toUpperCase()) in Mode) {
-            mode = (Mode as any)[modeStr]
-        }
-        this.setMode(mode, false)
+    /**
+     * Returns the showOnly types as a comma-separated string, or undefined if all
+     * gate types are shown. Meant as API for outside code.
+     */
+    public get showOnly(): string | undefined {
+        return this._options.showOnly === undefined ? undefined
+            : this._options.showOnly.join(",")
+    }
+
+    /**
+     * Sets the showOnly types from a comma-separated string, an array of strings,
+     * or undefined (to show all). Meant as API for outside code; not called during
+     * initialization.
+     */
+    public setShowOnly(showOnlyParam: string | string[] | null | undefined) {
+        const showOnly = showOnlyParam === null || showOnlyParam === undefined ? undefined : Array.isArray(showOnlyParam) ? showOnlyParam : this.splitShowOnlyParam(showOnlyParam)
+        this._options.showOnly = showOnly
+        this._menu?.rebuildMenu(showOnly)
+    }
+
+    private splitShowOnlyParam(showOnlyParam: string) {
+        return showOnlyParam.toLowerCase().split(/[, +]+/).filter(x => x.trim())
     }
 
     public setCircuitName(name: string | undefined) {
@@ -1227,7 +1307,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     }
 
     public setZoom(zoom: number, updateTopBar: boolean): number {
-        zoom = Math.max(10, Math.min(1000, zoom))
+        zoom = Math.max(10, Math.min(100000, zoom))
         const roundedZoomForUI = Math.round(zoom)
         this._options.zoom = roundedZoomForUI
         this._userDrawingScale = zoom / 100
@@ -1251,10 +1331,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     }
 
     public updateCustomComponentButtons() {
-        if (this._menu !== undefined) {
-            this._menu.updateCustomComponentButtons(this.factory.customDefs())
-            this.eventMgr.registerButtonListenersOn(this._menu.allCustomButtons(), true)
-        }
+        this._menu?.updateCustomComponentButtons(this.factory.customDefs())
         this._topBar?.updateCustomComponentCaption()
     }
 
@@ -1263,7 +1340,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     }
 
     public override focus() {
-        this.html.mainCanvas.focus()
+        this.html.mainCanvas.focus({ preventScroll: true })
     }
 
     /**
@@ -1597,7 +1674,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             return false
         }
 
-        const newGroup = RectangleDef.make<Rectangle>(this)
+        const newGroup = RectangleDef.make(this)
         newGroup.setSpawned()
 
         if (newGroup instanceof Rectangle) {
@@ -1615,16 +1692,20 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     }
 
     public setDirty(__reason: string) {
-        if (this.mode >= Mode.CONNECT) {
+        if (this.mode >= Mode.CONNECT && !this._isDirty) {
             // other modes can't be dirty
             this._isDirty = true
             this._topBar?.setDirty(true)
+            this.dispatchEvent(new CustomEvent("dirty"))
         }
     }
 
     public clearDirty() {
-        this._isDirty = false
-        this._topBar?.setDirty(false)
+        if (this._isDirty) {
+            this._isDirty = false
+            this._topBar?.setDirty(false)
+            this.dispatchEvent(new CustomEvent("clean"))
+        }
     }
 
     public setDark(dark: boolean) {
@@ -1785,8 +1866,10 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     }
 
     private guessAdequateCanvasSize(applyZoom: boolean): [number, number] {
-        let rightmostX = Number.NEGATIVE_INFINITY, leftmostX = Number.POSITIVE_INFINITY
-        let lowestY = Number.NEGATIVE_INFINITY, highestY = Number.POSITIVE_INFINITY
+        let leftmost = Infinity
+        let rightmost = -Infinity
+        let topmost = Infinity
+        let bottommost = -Infinity
         const drawables: DrawableWithPosition[] = [...this.editorRoot.components.all()]
         for (const wire of this.linkMgr.wires) {
             drawables.push(...wire.waypoints)
@@ -1796,34 +1879,37 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             const width = comp.width
             const left = cx - width / 2
             const right = left + width
-            if (right > rightmostX) {
-                rightmostX = right
+            if (right > rightmost) {
+                rightmost = right
             }
-            if (left < leftmostX) {
-                leftmostX = left
+            if (left < leftmost) {
+                leftmost = left
             }
 
             const cy = comp.posY
             const height = comp.height
             const top = cy - height / 2
             const bottom = top + height
-            if (bottom > lowestY) {
-                lowestY = bottom
+            if (bottom > bottommost) {
+                bottommost = bottom
             }
-            if (top < highestY) {
-                highestY = top
+            if (top < topmost) {
+                topmost = top
             }
         }
-        leftmostX = Math.max(0, leftmostX)
-        let w = rightmostX + leftmostX // add right margin equal to left margin
+        let w = rightmost - leftmost
         if (isNaN(w)) {
             w = 300
+        } else {
+            w += 2 * (leftmost + this._translationX) // add margin 
         }
-        highestY = Math.max(0, highestY)
-        let h = highestY + lowestY // add lower margin equal to top margin
+        let h = bottommost - topmost // add lower margin equal to top margin
         if (isNaN(h)) {
             h = 150
+        } else {
+            h += 2 * (topmost + this._translationY) // add margin 
         }
+        // console.log(`Guessed canvas size: ${w}x${h} (rightmostX=${rightmost}, leftmostX=${leftmost}, lowestY=${bottommost}, highestY=${topmost}, with ${drawables.length} drawables, translationX=${this._translationX}, translationY=${this._translationY})`)
         const f = applyZoom ? this._userDrawingScale : 1
         return [f * w, f * h]
     }
@@ -1898,6 +1984,17 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         }
     }
 
+    public saveToFile(onlyCustomComponents?: boolean) {
+        const saveLib = onlyCustomComponents === true && this.factory.hasCustomComponents()
+        const dataObject = saveLib
+            ? Serialization.buildLibraryObject(this)
+            : Serialization.buildCircuitObject(this)
+        const jsonStr = Serialization.stringifyObject(dataObject, false)
+        const blob = new Blob([jsonStr], { type: 'application/json5' })
+        const filename = this.documentDisplayName + (saveLib ? "-lib" : "") + ".json"
+        saveAs(blob, filename)
+    }
+
     /**
      * @param removeShowOnly if showOnly should be removed from the JSON (first returned value.). It is always removed from the compressed version for the URL, since it is an explicit URL parameter.
      */
@@ -1961,7 +2058,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             width *= drawingScale
             height *= drawingScale
 
-            const transform = new DOMMatrix().scale(drawingScale)
+            const transform = new DOMMatrix().scale(drawingScale).translate(this._translationX, this._translationY)
 
             const tmpCanvas = document.createElement('canvas')
             tmpCanvas.width = width
@@ -1970,11 +2067,11 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             const g = LogicEditor.getGraphics(tmpCanvas)
             const wasDark = isDarkMode()
             if (wasDark) {
-                setDarkMode(false, false)
+                setDarkMode(false, false, true)
             }
             this.doDrawWithContext(g, width, height, transform, transform, true, true, false)
             if (wasDark) {
-                setDarkMode(true, false)
+                setDarkMode(true, false, true)
             }
             tmpCanvas.toBlob(resolve, 'image/png')
             tmpCanvas.remove()
@@ -2001,7 +2098,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             : Serialization.stringifyObject(Serialization.buildCircuitObject(this), false)
 
         const [width, height] = this.guessAdequateCanvasSize(false)
-        const id = new DOMMatrix()
+        const id = new DOMMatrix().translate(this._translationX, this._translationY)
         const svgCtx = new SVGRenderingContext({ width, height, metadata })
         this.doDrawWithContext(svgCtx, width, height, id, id, true, true, false)
         const serializedSVG = svgCtx.getSerializedSvg()
@@ -2021,6 +2118,44 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         this._tutorialPaletteVisible = visible
         this._tutorialPalette?.setVisible(visible)
         this._topBar?.updateTutorialPaletteVisible(visible)
+    }
+
+    public exportXRayToNewWindow(xray: XRay) {
+        xray.materializeInputsAndOutputs()
+        const bounds = xray.components.boundingRect()
+        const additionalMargin = 5 * GRID_STEP
+        const opts = this.nonDefaultOptions() ?? {}
+        opts.origin = [bounds.left - additionalMargin, bounds.top - additionalMargin]
+        opts.propagationDelay = 0
+        opts.zoom = 100
+        const obj: Circuit = Object.assign(Serialization.buildComponentsAndWireObject(
+            [...xray.components.all()],
+            [], undefined), {
+            v: CurrentFormatVersion as typeof CurrentFormatVersion,
+            opts,
+        })
+        const serialized = Serialization.stringifyObject(obj, true)
+
+        // open new window with same url but no data
+        const url = new URL(window.location.href)
+        url.searchParams.delete(ATTRIBUTE_NAMES.data)
+        const newWindow = window.open(url.toString(), "_blank")
+        if (newWindow === null) {
+            console.warn("Could not open new window for xray export")
+            return
+        }
+
+        const now = Date.now()
+        const saveStr = now + ";" + serialized
+        try {
+            newWindow.sessionStorage.clear()
+            newWindow.sessionStorage.setItem(STORAGE_PREFIX + SINGLETON_INSTANCE_ID, saveStr)
+            newWindow.addEventListener("load", () => {
+                newWindow.Logic.singleton?.setMode(Mode.TRYOUT, true)
+            })
+        } catch (e) {
+            console.error("Failed to configure new window for xray export", e)
+        }
     }
 
     public setTestsPaletteVisible(visible: boolean) {
@@ -2386,7 +2521,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         // that the first transform is applied last and the last one first
         const baseTransform = new DOMMatrix().scale(this._baseUIDrawingScale)
         const contentTransform = baseTransform.scale(this._userDrawingScale).translate(this._translationX, this._translationY)
-        // console.log(`Drawing with zoom factor ${this._actualZoomFactor} and translation (${this._translationX}, ${this._translationY})`)
+        // console.log(`Drawing with scale ${this._userDrawingScale} and translation (${this._translationX}, ${this._translationY})`)
         this.doDrawWithContext(g, width, height, baseTransform, contentTransform, false, false, redrawMask)
         // const timeAfter = performance.now()
         // console.log(`Drawing took ${timeAfter - timeBefore}ms`)
@@ -2486,28 +2621,175 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             // set the transform to the base one but still apply the zoom factor
             g.setTransform(baseTransform)
             g.scale(this._userDrawingScale, this._userDrawingScale)
-            g.beginGroup("grid")
-            const widthAdjusted = width / this._userDrawingScale
-            const heightAdjusted = height / this._userDrawingScale
-            const step = GRID_STEP //* 2
-            g.strokeStyle = COLOR_GRID_LINES
-            g.lineWidth = 1
-            g.beginPath()
-            for (let x = step; x < widthAdjusted; x += step) {
-                g.moveTo(x, 0)
-                g.lineTo(x, heightAdjusted)
-            }
-            for (let y = step; y < heightAdjusted; y += step) {
-                g.moveTo(0, y)
-                g.lineTo(widthAdjusted, y)
-            }
-            g.stroke()
-            g.endGroup()
+            g.group("grid", () => {
+                const widthAdjusted = width / this._userDrawingScale
+                const heightAdjusted = height / this._userDrawingScale
+                const step = GRID_STEP //* 2
+                g.strokeStyle = COLOR_GRID_LINES
+                g.lineWidth = 1
+                g.beginPath()
+                for (let x = this._translationX % step; x < widthAdjusted; x += step) {
+                    g.moveTo(x, 0)
+                    g.lineTo(x, heightAdjusted)
+                }
+                for (let y = this._translationY % step; y < heightAdjusted; y += step) {
+                    g.moveTo(0, y)
+                    g.lineTo(widthAdjusted, y)
+                }
+                g.stroke()
+            })
             g.setTransform(contentTransform)
         }
-        if (!skipBorder && this.translationX !== 0 || this.translationY !== 0) {
-            // draw axes when translated
-            g.beginGroup("axes")
+
+        // draw axes when translated
+        // if (!skipBorder && this.translationX !== 0 || this.translationY !== 0) {
+        //     this.drawOriginAndAxes(g)
+        // }
+
+        // draw guidelines when moving waypoint
+        const singleMovingWaypoint = moveMgr.getSingleMovingWaypoint()
+        if (singleMovingWaypoint !== undefined) {
+            g.group("guides", () => {
+                const guides = singleMovingWaypoint.getPrevAndNextAnchors()
+                g.strokeStyle = COLOR_GRID_LINES_GUIDES
+                g.lineWidth = 1.5
+                g.beginPath()
+                for (const guide of guides) {
+                    g.moveTo(guide.posX, 0)
+                    g.lineTo(guide.posX, height)
+                    g.moveTo(0, guide.posY)
+                    g.lineTo(width, guide.posY)
+                }
+                g.stroke()
+            })
+        }
+
+        // draw border according to mode
+        if (!skipBorder && (this._mode >= Mode.CONNECT || this._maxInstanceMode === MAX_MODE_WHEN_SINGLETON)) {
+            g.group("border", () => {
+                g.setTransform(baseTransform)
+                g.strokeStyle = COLOR_BORDER
+                g.lineWidth = 2
+                if (this._maxInstanceMode === MAX_MODE_WHEN_SINGLETON && this._mode < this._maxInstanceMode) {
+                    g.strokeRect(0, 0, width, height)
+                    const h = this.guessAdequateCanvasSize(true)[1]
+                    strokeSingleLine(g, 0, h, width, h)
+
+                    g.fillStyle = COLOR_BACKGROUND_UNUSED_REGION
+                    g.fillRect(0, h, width, height - h)
+                } else {
+                    // skip border where the top tab is
+                    const myX = this.html.mainCanvas.getBoundingClientRect().x
+                    const [x1, x2] = this._topBar?.getActiveTabCoords() ?? [0, 0]
+                    g.beginPath()
+                    g.moveTo(x1 - myX, 0)
+                    g.lineTo(0, 0)
+                    g.lineTo(0, height)
+                    g.lineTo(width, height)
+                    g.lineTo(width, 0)
+                    g.lineTo(x2 - myX, 0)
+                    g.stroke()
+                }
+                g.setTransform(contentTransform)
+            })
+        }
+
+        // const currentScale = this._currentScale
+        // g.scale(currentScale, currentScale)
+
+        const drawTime = this.timeline.logicalTime()
+        const drawTimeAnimationFraction = !this._options.animateWires ? undefined : (drawTime / 1000) % 1
+        g.strokeStyle = COLOR_COMPONENT_BORDER
+        const currentCompUnderPointer = this.eventMgr.currentComponentUnderPointer
+        const drawParams: DrawParams = {
+            drawTime,
+            drawTimeAnimationFraction,
+            currentCompUnderPointer,
+            highlightedItems,
+            highlightColor,
+            currentSelection: undefined,
+            anythingMoving: moveMgr.areDrawablesMoving(),
+            currentDrawingScale: this._userDrawingScale,
+            xrayLevel: 0,
+        }
+        const currentSelection = this.eventMgr.currentSelection
+        drawParams.currentSelection = currentSelection
+        const drawComp = (comp: Component) => {
+            g.group(comp.constructor.name, () => {
+                comp.draw(g, drawParams)
+                for (const node of comp.allNodes()) {
+                    node.draw(g, drawParams) // never show nodes as selected
+                }
+            })
+        }
+
+        const root = this._editorRoot
+
+        // draw background components
+        g.group("background", () => {
+            for (const comp of root.components.withZIndex(DrawZIndex.Background)) {
+                drawComp(comp)
+            }
+        })
+
+        // draw wires
+        g.group("wires", () => {
+            root.linkMgr.draw(g, drawParams) // never show wires as selected
+        })
+
+        // draw normal components
+        g.group("components", () => {
+            for (const comp of root.components.withZIndex(DrawZIndex.Normal)) {
+
+                drawComp(comp)
+            }
+        })
+
+        // draw anchor of moving component, if any
+        const movingCompWithAnchor = moveMgr.getSingleMovingComponentWithAnchors()
+        if (movingCompWithAnchor !== undefined) {
+            g.group("anchors", () => {
+                drawAnchorsForComponent(g, movingCompWithAnchor, true)
+            })
+        } else if (this._options.showAnchors) {
+            g.group("anchors", () => {
+                for (const comp of root.components.all()) {
+                    drawAnchorsForComponent(g, comp, false)
+                }
+            })
+        }
+
+        // draw overlays
+        g.group("overlays", () => {
+            for (const comp of root.components.withZIndex(DrawZIndex.Overlay)) {
+                drawComp(comp)
+            }
+        })
+
+        // draw refs
+        if (this._options.showIDs) {
+            drawComponentIDs(g, root.components.all())
+        }
+
+        // draw selection
+        if (currentSelection !== undefined && currentSelection.currentlyDrawnRect !== undefined) {
+            const selRect = currentSelection.currentlyDrawnRect
+            g.group("selection", () => {
+                g.lineWidth = 1.5
+                g.strokeStyle = "rgb(100,100,255)"
+                g.fillStyle = "rgba(100,100,255,0.2)"
+                g.beginPath()
+                g.rect(selRect.x, selRect.y, selRect.width, selRect.height)
+                g.stroke()
+                g.fill()
+            })
+        }
+
+        // this.drawDebugInfo(g)
+    }
+
+    private drawOriginAndAxes(g: GraphicsRendering) {
+        g.group("axes", () => {
             g.strokeStyle = COLOR_GRID_LINES
             g.fillStyle = COLOR_GRID_LINES
             g.lineWidth = 1
@@ -2538,162 +2820,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
             g.font = '10px sans-serif'
             g.textAlign = 'right'
             fillTextVAlign(g, TextVAlign.bottom, "0", -3, -3)
-
-            g.endGroup()
-        }
-
-        // draw guidelines when moving waypoint
-        const singleMovingWaypoint = moveMgr.getSingleMovingWaypoint()
-        if (singleMovingWaypoint !== undefined) {
-            g.beginGroup("guides")
-            const guides = singleMovingWaypoint.getPrevAndNextAnchors()
-            g.strokeStyle = COLOR_GRID_LINES_GUIDES
-            g.lineWidth = 1.5
-            g.beginPath()
-            for (const guide of guides) {
-                g.moveTo(guide.posX, 0)
-                g.lineTo(guide.posX, height)
-                g.moveTo(0, guide.posY)
-                g.lineTo(width, guide.posY)
-            }
-            g.stroke()
-            g.endGroup()
-        }
-
-        // draw border according to mode
-        if (!skipBorder && (this._mode >= Mode.CONNECT || this._maxInstanceMode === MAX_MODE_WHEN_SINGLETON)) {
-            g.beginGroup("border")
-            g.setTransform(baseTransform)
-            g.strokeStyle = COLOR_BORDER
-            g.lineWidth = 2
-            if (this._maxInstanceMode === MAX_MODE_WHEN_SINGLETON && this._mode < this._maxInstanceMode) {
-                g.strokeRect(0, 0, width, height)
-                const h = this.guessAdequateCanvasSize(true)[1]
-                strokeSingleLine(g, 0, h, width, h)
-
-                g.fillStyle = COLOR_BACKGROUND_UNUSED_REGION
-                g.fillRect(0, h, width, height - h)
-            } else {
-                // skip border where the top tab is
-                const myX = this.html.mainCanvas.getBoundingClientRect().x
-                const [x1, x2] = this._topBar?.getActiveTabCoords() ?? [0, 0]
-                g.beginPath()
-                g.moveTo(x1 - myX, 0)
-                g.lineTo(0, 0)
-                g.lineTo(0, height)
-                g.lineTo(width, height)
-                g.lineTo(width, 0)
-                g.lineTo(x2 - myX, 0)
-                g.stroke()
-            }
-            g.setTransform(contentTransform)
-            g.endGroup()
-        }
-
-        // const currentScale = this._currentScale
-        // g.scale(currentScale, currentScale)
-
-        const drawTime = this.timeline.logicalTime()
-        const drawTimeAnimationFraction = !this._options.animateWires ? undefined : (drawTime / 1000) % 1
-        g.strokeStyle = COLOR_COMPONENT_BORDER
-        const currentCompUnderPointer = this.eventMgr.currentComponentUnderPointer
-        const drawParams: DrawParams = {
-            drawTime,
-            drawTimeAnimationFraction,
-            currentCompUnderPointer,
-            highlightedItems,
-            highlightColor,
-            currentSelection: undefined,
-            anythingMoving: moveMgr.areDrawablesMoving(),
-        }
-        const currentSelection = this.eventMgr.currentSelection
-        drawParams.currentSelection = currentSelection
-        const drawComp = (comp: Component) => {
-            g.beginGroup(comp.constructor.name)
-            try {
-                comp.draw(g, drawParams)
-                for (const node of comp.allNodes()) {
-                    node.draw(g, drawParams) // never show nodes as selected
-                }
-            } finally {
-                g.endGroup()
-            }
-        }
-
-        const root = this._editorRoot
-
-        // draw background components
-        g.beginGroup("background")
-        for (const comp of root.components.withZIndex(DrawZIndex.Background)) {
-            drawComp(comp)
-        }
-        g.endGroup()
-
-        // draw wires
-        g.beginGroup("wires")
-        root.linkMgr.draw(g, drawParams) // never show wires as selected
-        g.endGroup()
-
-        // draw normal components
-        g.beginGroup("components")
-        for (const comp of root.components.withZIndex(DrawZIndex.Normal)) {
-            drawComp(comp)
-        }
-        g.endGroup()
-
-        // draw anchor of moving component, if any
-        const movingCompWithAnchor = moveMgr.getSingleMovingComponentWithAnchors()
-        if (movingCompWithAnchor !== undefined) {
-            g.beginGroup("anchors")
-            drawAnchorsForComponent(g, movingCompWithAnchor, true)
-            g.endGroup()
-        } else if (this._options.showAnchors) {
-            g.beginGroup("anchors")
-            for (const comp of root.components.all()) {
-                drawAnchorsForComponent(g, comp, false)
-            }
-            g.endGroup()
-        }
-
-        // draw overlays
-        g.beginGroup("overlays")
-        for (const comp of root.components.withZIndex(DrawZIndex.Overlay)) {
-            drawComp(comp)
-        }
-        g.endGroup()
-
-        // draw refs
-        if (this._options.showIDs) {
-            g.beginGroup("refs")
-            g.font = 'bold 14px sans-serif'
-            g.strokeStyle = "white"
-            g.lineWidth = 3
-            g.fillStyle = COLOR_COMPONENT_ID
-            g.textAlign = 'center'
-            for (const comp of root.components.all()) {
-                if (comp.ref !== undefined) {
-                    strokeTextVAlign(g, TextVAlign.middle, comp.ref, comp.posX, comp.posY)
-                    fillTextVAlign(g, TextVAlign.middle, comp.ref, comp.posX, comp.posY)
-                }
-            }
-            g.endGroup()
-        }
-
-        // draw selection
-        let selRect
-        if (currentSelection !== undefined && (selRect = currentSelection.currentlyDrawnRect) !== undefined) {
-            g.beginGroup("selection")
-            g.lineWidth = 1.5
-            g.strokeStyle = "rgb(100,100,255)"
-            g.fillStyle = "rgba(100,100,255,0.2)"
-            g.beginPath()
-            g.rect(selRect.x, selRect.y, selRect.width, selRect.height)
-            g.stroke()
-            g.fill()
-            g.endGroup()
-        }
-
-        // this.drawDebugInfo(g)
+        })
     }
 
     private drawDebugInfo(g: GraphicsRendering) {
@@ -2725,8 +2852,23 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         if (this.eventMgr.currentSelectionEmpty()) {
             return false
         }
+
+        const selection = this.eventMgr.currentSelection?.previouslySelectedElements ?? []
+        let anyLocked = false
+        for (const elem of selection) {
+            if (elem instanceof ComponentBase && elem.lockPos) {
+                anyLocked = true
+                break
+            }
+        }
+        if (anyLocked) {
+            window.alert(S.Messages.CannotDeleteLockedComponent)
+            return false
+        }
+
+
         let anyDeleted = false
-        for (const elem of this.eventMgr.currentSelection?.previouslySelectedElements ?? []) {
+        for (const elem of selection) {
             anyDeleted = this.eventMgr.tryDeleteDrawable(elem).isChange || anyDeleted
         }
 
@@ -2818,6 +2960,13 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
         }
     }
 
+    public newXRay(comp: Component, xrayLevel: number, scale: number) {
+        const xray = new XRay(comp, xrayLevel, scale)
+        const wire = xray.wire.bind(xray)
+        const gate = xray.gate.bind(xray)
+        return { xray, wire, gate }
+    }
+
     public static decodeFromURLOld(str: string) {
         return decodeURIComponent(atob(str.replace(/-/g, "+").replace(/_/g, "/").replace(/%3D/g, "=")))
     }
@@ -2825,10 +2974,10 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     public static getGraphics(canvas: HTMLCanvasElement): GraphicsRendering {
         const g = canvas.getContext("2d")! as GraphicsRendering
         g.createPath = (path?: Path2D | string) => new Path2D(path)
-        g.beginGroup = () => undefined
-        g.endGroup = () => undefined
+        g.group = (__className, f) => f()
         return g
     }
+
 }
 
 export class LogicStatic {
@@ -2857,42 +3006,6 @@ export class LogicStatic {
         }
     }
 
-    public runSampleTestSuite(options: unknown): void {
-        const f = async () => {
-            if (this.singleton) {
-                const testSuite = new TestSuite([{
-                    name: "Simple XOR gate test suite",
-                    cases: [{
-                        name: "false false -> false",
-                        in: { in0: 0, in1: 0 },
-                        out: { out0: 0 },
-                        stopOnFail: true,
-                    }, {
-                        name: "false true -> true",
-                        in: { in0: 1, in1: 0 },
-                        out: { out0: 1 },
-                    }, {
-                        name: "true false -> true",
-                        in: { in0: 0, in1: 1 },
-                        out: { out0: 1 },
-                    }, {
-                        name: "true true -> false",
-                        in: { in0: 1, in1: 1 },
-                        out: { out0: 0 },
-                    }],
-                }, this.singleton.editorRoot.components])
-                const _opts = isRecord(options) ? options : {}
-                const results = await this.singleton.runTestSuite(testSuite, _opts)
-                if (results === undefined) {
-                    console.error("Could not run test suite")
-                } else {
-                    results.dump()
-                }
-            }
-        }
-        setTimeout(f, 0)
-    }
-
     public printUndoStack() {
         this.singleton?.editTools.undoMgr.dump()
     }
@@ -2916,7 +3029,12 @@ export class LogicStatic {
                 mode = looksDark
             }
         }
-        setDarkMode(Boolean(mode), true)
+        setDarkMode(Boolean(mode), true, false)
+    }
+
+    public getAllComponentTypes(lang?: string) {
+        const l = lang !== undefined && isLang(lang) ? lang : DefaultLang
+        return getAllComponentTypes(l)
     }
 
 }

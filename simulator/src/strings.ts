@@ -43,9 +43,11 @@ const Strings_fr = {
         },
         SectionNames: {
             InputOutput: "Entrées/ sorties",
-            Layout: "Dispo- sition",
             Gates: "Portes",
-            Components: "Compo- sants",
+            Layout: "Dispo- sition",
+            Arithmetic: "Arith- métique",
+            Combinational: "Combina- toire",
+            Memory: "Mémoire",
             Custom: "Person- nalisé",
         },
         Components: RichStringEnum.withProps<ComponentStrings>()({
@@ -99,11 +101,14 @@ const Strings_fr = {
             xnor4: ["Porte NON-OU-X à 4 entrées", "NON-OU-X (4)"],
 
             ControlledInverter: ["Inverseur commuté", "Inv. comm."],
+            Bypass: ["Bypass", "Bypass"],
             GateArray: ["Porte multiple", "Porte mult."],
             TristateBufferArray: ["Sortie à 3 états multiple", "3 états mult."],
 
             HalfAdder: ["Demi-additionneur", "Demi-add."],
             Adder: ["Additionneur", "Addit."],
+            Add3IfGeq5: ["Additionneur conditionnel", "+3 Si ≥5"],
+            IncDec: ["Incrementeur/Décrementeur", "Inc/Dec"],
             AdderArray: ["Additionneur multiple", "Add. mult."],
             ALU: ["Unité arithmétique et logique", "ALU"],
 
@@ -126,6 +131,8 @@ const Strings_fr = {
             Demux8to16: ["Démultiplexer 8-vers-16 (1 bit de contrôle)", "Demux 8-16"],
 
             LatchSR: ["Verrou SR", "Verrou SR"],
+            LatchSRGated: ["Verrou SR avec activation", "Verrou SR-E"],
+            LatchD: ["Verrou D", "Verrou D"],
             FlipflopJK: ["Bascule JK", "Basc. JK"],
             FlipflopT: ["Bascule T", "Basc. T"],
             FlipflopD: ["Bascule D", "Basc. D"],
@@ -180,6 +187,7 @@ const Strings_fr = {
         showUserDataLink: tuple("Voir les", "données liées"),
         userDataHeader: "Les données suivantes sont exportées avec le circuit:",
         wireStyle: "Style des fils:",
+        xrayMode: "Mode rayons X:",
     },
     Tests: {
         Title: "Tests",
@@ -234,6 +242,7 @@ const Strings_fr = {
         CircularAnchorsForbidden: "Les ancrages circulaires ne sont pas pris en charge.",
         NotImplemented: "Cette fonctionnalité n’est pas encore implémentée.",
         NoPermission: "Cette action n’est pas autorisée dans ce mode.",
+        CannotDeleteLockedComponent: "Impossible de supprimer un composant verrouillé.",
         ReallyCloseWindow: "Voulez-vous vraiment fermer la fenêtre sans prendre en compte les derniers changements?",
         LoadedCircuitFromSessionStorage: template("Circuit restauré depuis sauvegarde automatique du ${day} à ${time}"),
         FailedToLoadCircuitFromStorage: template("Impossible de restaurer le circuit (${error})."),
@@ -283,6 +292,8 @@ const Strings_fr = {
                 LockPosition: "Verrouiller la position",
                 ShowAsUnknown: "Afficher comme inconnu",
 
+                SwapInputs: "Permuter les entrées",
+
                 ForceOutputSingle: "Forcer la sortie",
                 ForceOutputMultiple: "Forcer une sortie",
                 Output: "Sortie",
@@ -304,6 +315,12 @@ const Strings_fr = {
                 TriggerFallingEdge: "flanc descendant",
 
                 ShowContent: "Montrer le contenu",
+                XRayMode: "Mode rayons X",
+                XRayModeDefault: "Par défaut",
+                XRayModeAuto: "Montrer si zoomé",
+                XRayModeForce: "Toujours montrer",
+                XRayModeOff: "Toujours cacher",
+                XRayInNewWindow: "Montrer dans une nouvelle fenêtre",
 
                 ParamControlBitAtBottom: "Bit de contrôle en bas",
                 ParamControlBitsAtBottom: "Bits de contrôle en bas",
@@ -320,6 +337,7 @@ const Strings_fr = {
             InputSetDesc: "S (Set, mise à 1)",
             InputResetDesc: "R (Reset, mise à 0)",
             InputDataDesc: "D (Données)",
+            InputEnableDesc: "E (Enable, activation)",
             InputWriteEnableDesc: "WE (écriture activée)",
 
             OutputSumDesc: "S (somme)",
@@ -361,6 +379,12 @@ const Strings_fr = {
                 NotInMainEditor: "Revenez d’abord à l’éditeur principal pour modifier le circuit personnalisé de ce composant.",
             },
         },
+        Add3IfGeq5: {
+            tooltip: {
+                title: "Ajouter 3 si A ≥ 5",
+                desc: "Ce composant ajoute 3 à son entrée A si A est supérieur ou égal à 5, et ne fait rien sinon.",
+            },
+        },
         Adder: {
             tooltip: {
                 title: "Additionneur",
@@ -370,20 +394,25 @@ const Strings_fr = {
         AdderArray: {
             tooltip: {
                 title: template("Additionneur à ${numBits} bit$s{numBits}"),
-                desc: "Additionne les deux nombres d'entrées A et B avec une retenue d’entrée Cin, et fournit les bits de somme S et une retenue de sortie Cout.",
+                desc: "Additionne les deux nombres d'entrées A et B avec une retenue d’entrée Cin, et fournit les bits de somme S, une retenue de sortie Cout et un bit de dépassement de capacité (overflow) V.",
             },
         },
         ALU: {
+            // Arith
             "A+B": tuple("+", "Addition"),
             "A-B": tuple("A–B", "Soustraction (A – B)"),
+            // Arith-ext
             "B-A": tuple("B–A", "Soustraction (B – A)"),
             "A+1": tuple("A+1", "A + 1"),
             "A-1": tuple("A–1", "A – 1"),
             "-A": tuple("–A", "Négation d’A"),
             "A*2": tuple("A×2", "Addition d’A à lui-même (A × 2)"),
             "A/2": tuple("A/2", "Décalage arithmétique à droite de 1 (A / 2)"),
+
+            // Logic
             "A|B": tuple("OU", "Disjonction (A OU B)"),
             "A&B": tuple("ET", "Conjonction (A ET B)"),
+            // Logic-ext
             "A|~B": tuple("OU-n", "A OU NON(B)"),
             "A&~B": tuple("ET-n", "A ET NON(B)"),
             "~A": tuple("A̅", "Inversion d’A"),
@@ -402,6 +431,12 @@ const Strings_fr = {
             contextMenu: {
                 toggleShowOp: "Afficher l’opération",
                 ParamUseExtendedOpcode: "Utiliser opérations étendues",
+            },
+        },
+        Bypass: {
+            tooltip: {
+                title: "Bypass",
+                desc: "Ignore ses entrées normales lorsque le signal de contrôle est actif.",
             },
         },
         Clock: {
@@ -462,6 +497,12 @@ const Strings_fr = {
         FlipflopD: {
             tooltip: {
                 title: "Bascule D",
+                desc: "Stocke un bit.",
+            },
+        },
+        FlipflopDWithEnable: {
+            tooltip: {
+                title: "Bascule D avec Enable",
                 desc: "Stocke un bit.",
             },
         },
@@ -531,6 +572,12 @@ const Strings_fr = {
             tooltip: {
                 title: "Demi-additionneur",
                 desc: "Additionne deux bits A et B et fournit un bit de somme S et une retenue de sortie C.",
+            },
+        },
+        IncDec: {
+            tooltip: {
+                title: "IncDec",
+                desc: "Incrémenteur/Décrémenteur. Incrémente ou décrémente le nombre binaire d’entrée A selon la valeur de l’entrée Inc/Dec, et fournit le résultat en sortie S ainsi qu’une retenue (ou un emprunt) de sortie Cout.",
             },
         },
         Input: {
@@ -606,6 +653,21 @@ const Strings_fr = {
                 title: "Verrou SR",
                 desc: "Stocke un bit.",
             },
+            contextMenu: {
+                WithEnable: "Avec entrée d’activation",
+            },
+        },
+        LatchSRGated: {
+            tooltip: {
+                title: "Verrou SR avec Enable",
+                desc: "Stocke un bit.",
+            },
+        },
+        LatchD: {
+            tooltip: {
+                title: "Verrou D",
+                desc: "Stocke un bit.",
+            },
         },
         Mux: {
             tooltip: template("Multiplexeur ${from} vers ${to}"),
@@ -614,9 +676,8 @@ const Strings_fr = {
             contextMenu: {
                 ShowWiring: "Afficher les connexions",
                 UseZForDisconnected: "Utiliser Z pour sorties déconnectées",
-
-                ParamNumFrom: tuple("Nombre d’entrées", template("${val} entrée$s{val}")),
-                ParamNumTo: tuple("Nombre de sorties", template("${val} sortie$s{val}")),
+                InputsOutputs: template("${numInputs} entrée$s{numInputs} → ${numOutputs} sortie$s{numOutputs}"),
+                ParamNumInOut: "Nombre d’entrées/sorties",
             },
         },
         Output: {
@@ -819,6 +880,10 @@ const Strings_fr = {
                 WireStyleSquareVH: "V puis H",
                 WireStyleCurved: "Courbe",
 
+                XRayModeAuto: "Auto",
+                XRayModeForce: "Forcer",
+                XRayModeOff: "Désactiver",
+
                 HiddenWire: "Masquer le fil",
             },
             timeline: {
@@ -847,7 +912,9 @@ const Strings_en: Strings = {
             InputOutput: "Input/ Output",
             Gates: "Gates",
             Layout: "Layout",
-            Components: "Compo- nents",
+            Arithmetic: "Arith- metic",
+            Combinational: "Combina- tional",
+            Memory: "Memory",
             Custom: "Custom",
         },
         Labels: {
@@ -905,11 +972,14 @@ const Strings_en: Strings = {
             xnor4: ["4-Input AND Gate", "XNOR (4)"],
 
             ControlledInverter: ["Switched Inverter", "Switched Inv."],
+            Bypass: ["Bypass", "Bypass"],
             GateArray: ["Gate Array", "Gate Array"],
             TristateBufferArray: ["Tristate Buffer Array", "Tristate Arr."],
 
             HalfAdder: ["Half Adder", "Half Adder"],
             Adder: ["Full Adder", "Full Adder"],
+            Add3IfGeq5: ["Add 3 if A ≥ 5", "+3 If ≥5"],
+            IncDec: ["Incrementer/Decrementer", "Inc/Dec"],
             AdderArray: ["Adder Array", "Adder Arr."],
             ALU: ["Arithmetic and Logic Unit", "ALU"],
 
@@ -931,10 +1001,12 @@ const Strings_en: Strings = {
             Demux4to8: ["4-to-8 Demultiplexer (1 Control Bit)", "Demux 4-8"],
             Demux8to16: ["8-to-16 Demultiplexer (1 Control Bit)", "Demux 8-16"],
 
-            LatchSR: ["SR Latch", "SR Latch"],
-            FlipflopJK: ["JK Flip-Flop", "FF-JK"],
-            FlipflopT: ["T Flip-Flop", "FF-T"],
-            FlipflopD: ["D Flip-Flop", "FF-D"],
+            LatchSR: ["SR (Set-Reset) Latch", "SR Latch"],
+            LatchSRGated: ["SR (Set-Reset) Latch with Enable", "SR-E Latch"],
+            LatchD: ["D (Data) Latch", "D Latch"],
+            FlipflopJK: ["JK Flip-Flop", "JK Flip-Flop"],
+            FlipflopT: ["T (Toggle) Flip-Flop", "T Flip-Flop"],
+            FlipflopD: ["D (Data) Flip-Flop", "D Flip-Flop"],
             Register: ["Register", "Register"],
             ShiftRegister: ["Shift Register", "Shift Reg."],
             RAM: ["RAM Module", "RAM"],
@@ -986,6 +1058,7 @@ const Strings_en: Strings = {
         showUserDataLink: tuple("See ", "linked data"),
         userDataHeader: "This data is exported with the circuit:",
         wireStyle: "Wire style:",
+        xrayMode: "X-ray mode:",
     },
     Tests: {
         Title: "Tests",
@@ -1040,6 +1113,7 @@ const Strings_en: Strings = {
         CircularAnchorsForbidden: "Circular anchors are not supported.",
         NotImplemented: "This feature is not implemented yet.",
         NoPermission: "This action is not allowed in this mode.",
+        CannotDeleteLockedComponent: "Cannot delete a locked component.",
         ReallyCloseWindow: "Do you really want to close the window without saving the changes?",
         LoadedCircuitFromSessionStorage: template("Loaded from last session on ${day} at ${time}"),
         FailedToLoadCircuitFromStorage: template("Failed to load the circuit (${error})"),
@@ -1089,6 +1163,8 @@ const Strings_en: Strings = {
                 LockPosition: "Lock Position",
                 ShowAsUnknown: "Show As Unknown",
 
+                SwapInputs: "Swap Inputs",
+
                 ForceOutputSingle: "Force Output",
                 ForceOutputMultiple: "Force an Output",
                 Output: "Output",
@@ -1110,6 +1186,12 @@ const Strings_en: Strings = {
                 TriggerFallingEdge: "Fallling Edge",
 
                 ShowContent: "Show Content",
+                XRayMode: "X-Ray Mode",
+                XRayModeDefault: "Default",
+                XRayModeAuto: "Show When Zoomed",
+                XRayModeForce: "Always Show",
+                XRayModeOff: "Never Show",
+                XRayInNewWindow: "Show in New Window",
 
                 ParamControlBitAtBottom: "Control Bit at Bottom",
                 ParamControlBitsAtBottom: "Control Bits at Bottom",
@@ -1126,6 +1208,7 @@ const Strings_en: Strings = {
             InputSetDesc: "S (Set, set to 1)",
             InputResetDesc: "R (Reset, set to 0)",
             InputDataDesc: "D (Data)",
+            InputEnableDesc: "E (Enable)",
             InputWriteEnableDesc: "WE (Write Enable)",
 
             OutputSumDesc: "S (Sum)",
@@ -1167,29 +1250,40 @@ const Strings_en: Strings = {
                 NotInMainEditor: "Please go back to the main editor to edit the custom circuit of this component.",
             },
         },
+        Add3IfGeq5: {
+            tooltip: {
+                title: "Add 3 if ≥ 5",
+                desc: "This component adds 3 to its input A if A is greater than or equal to 5, and does nothing otherwise.",
+            },
+        },
         Adder: {
             tooltip: {
                 title: "Adder",
-                desc: "Adds two bits A and B together with an input carry Cin, and outputs a sum bit S and an output carry Cout.",
+                desc: "Adds two bits A and B together with an input carry Cin; outputs a sum bit S and an output carry Cout.",
             },
         },
         AdderArray: {
             tooltip: {
                 title: template("${numBits}-Bit Adder Array"),
-                desc: "Adds the two inputs numbers A et B together with an input carry Cin, and outputs sum bits S and an output carry Cout.",
+                desc: "Adds the two inputs numbers A et B together with an input carry Cin; outputs the sum bits S, an output carry Cout, and an overflow flag V.",
             },
         },
         ALU: {
+            // Arith
             "A+B": tuple("+", "Addition"),
             "A-B": tuple("A–B", "Subtraction (A – B)"),
+            // Arith-ext
             "B-A": tuple("B–A", "Subtraction (B – A)"),
             "A+1": tuple("A+1", "A + 1"),
             "A-1": tuple("A–1", "A – 1"),
             "-A": tuple("–A", "Negation of A"),
             "A*2": tuple("A×2", "Addition of A to itself (A × 2)"),
             "A/2": tuple("A/2", "Arithmetic right shift by 1 (A/2)"),
+
+            // Logic
             "A|B": tuple("OR", "Disjunction (A OR B)"),
             "A&B": tuple("AND", "Conjunction (A AND B)"),
+            // Logic-ext
             "A|~B": tuple("ORn", "A OR NOT(B)"),
             "A&~B": tuple("ANDn", "A AND NOT(B)"),
             "~A": tuple("A̅", "Inversion of A"),
@@ -1208,6 +1302,12 @@ const Strings_en: Strings = {
             contextMenu: {
                 toggleShowOp: "Show Operation",
                 ParamUseExtendedOpcode: "Use Extended Opcode",
+            },
+        },
+        Bypass: {
+            tooltip: {
+                title: "Bypass",
+                desc: "Ignores its normal inputs when the control signal is active.",
             },
         },
         Clock: {
@@ -1268,6 +1368,12 @@ const Strings_en: Strings = {
         FlipflopD: {
             tooltip: {
                 title: "D Flip-Flop",
+                desc: "Stores one bit.",
+            },
+        },
+        FlipflopDWithEnable: {
+            tooltip: {
+                title: "D Flip-Flop with Enable",
                 desc: "Stores one bit.",
             },
         },
@@ -1336,6 +1442,12 @@ const Strings_en: Strings = {
             tooltip: {
                 title: "Half Adder",
                 desc: "Adds two bits A and B. Outputs a sum bit S and an output carry bit C.",
+            },
+        },
+        IncDec: {
+            tooltip: {
+                title: "IncDec",
+                desc: "Incrementer/Decrementer: adds 1 to (Inc) or subtracts 1 from (Dec) the input number A, with an input carry Cin; outputs the result S and an output carry (or borrow) Cout.",
             },
         },
         Input: {
@@ -1411,6 +1523,21 @@ const Strings_en: Strings = {
                 title: "SR Latch",
                 desc: "Stores one bit.",
             },
+            contextMenu: {
+                WithEnable: "With Enable Pin",
+            },
+        },
+        LatchSRGated: {
+            tooltip: {
+                title: "SR Latch with Enable",
+                desc: "Stores one bit.",
+            },
+        },
+        LatchD: {
+            tooltip: {
+                title: "D Latch",
+                desc: "Stores one bit.",
+            },
         },
         Mux: {
             tooltip: template("${from}-to-${to} Multiplexer"),
@@ -1419,9 +1546,8 @@ const Strings_en: Strings = {
             contextMenu: {
                 ShowWiring: "Show Internal Wiring",
                 UseZForDisconnected: "Use Z For Disconnected Pins",
-
-                ParamNumFrom: tuple("Number of Inputs", template("${val} Input$s{val}")),
-                ParamNumTo: tuple("Number of Outputs", template("${val} Output$s{val}")),
+                InputsOutputs: template("${numInputs} Input$s{numInputs} → ${numOutputs} Output$s{numOutputs}"),
+                ParamNumInOut: "Number of Inputs/Outputs",
             },
         },
         Output: {
@@ -1625,6 +1751,10 @@ const Strings_en: Strings = {
                 WireStyleSquareVH: "V then H",
                 WireStyleCurved: "Curve",
 
+                XRayModeAuto: "Auto",
+                XRayModeForce: "Force",
+                XRayModeOff: "Disable",
+
                 HiddenWire: "Hide Wire",
             },
             timeline: {
@@ -1647,20 +1777,20 @@ const Strings_en: Strings = {
 }
 
 
-const langs = {
+export const TranslationStrings = {
     fr: Strings_fr,
     en: Strings_en,
 }
 
-export type Lang = keyof typeof langs
+export type Lang = keyof typeof TranslationStrings
 
 export function isLang(lang: string): lang is Lang {
-    return lang in langs
+    return lang in TranslationStrings
 }
 
 export function setLang(l: Lang) {
     // console.log(`Setting language to '${l}'`)
-    S = langs[l]
+    S = TranslationStrings[l]
     _lang = l
 }
 
@@ -1671,5 +1801,5 @@ export function getLang(): Lang {
 export const DefaultLang: Lang = "en"
 
 /** The current language strings. */
-export let S: Strings = langs[DefaultLang]
+export let S: Strings = TranslationStrings[DefaultLang]
 let _lang: Lang = DefaultLang

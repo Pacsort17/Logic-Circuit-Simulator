@@ -1,7 +1,7 @@
 import { distSquaredToWaypointIfOver, drawWaypoint, GRID_STEP, NodeStyle, WAYPOINT_DIAMETER } from "../drawutils"
-import { HighImpedance, InteractionResult, isUnknown, LogicValue, Mode, RepeatFunction, toLogicValue, Unknown } from "../utils"
-import { Component, InputNodeRepr, NodeGroup, OutputNodeRepr } from "./Component"
-import { DrawableWithPosition, DrawContext, GraphicsRendering, Orientation } from "./Drawable"
+import { HighImpedance, InteractionResult, isUnknown, LogicValue, Mode, Orientation, RepeatFunction, toLogicValue, Unknown } from "../utils"
+import { Component, InputNodeRepr, NodeGroup, NodeLabelOffsetProvider, OutputNodeRepr } from "./Component"
+import { DrawableParent, DrawableWithPosition, DrawContext, GraphicsRendering } from "./Drawable"
 import { Wire } from "./Wire"
 
 export type Node = NodeIn | NodeOut
@@ -19,6 +19,8 @@ export const DEFAULT_WIRE_COLOR = WireColor.black
 
 export type WireColor = keyof typeof WireColor
 
+export type MirrorNode<N extends Node> = N extends NodeIn ? NodeOut : N extends NodeOut ? NodeIn : Node
+
 export abstract class NodeBase<N extends Node> extends DrawableWithPosition {
 
     public readonly id: number
@@ -28,20 +30,25 @@ export abstract class NodeBase<N extends Node> extends DrawableWithPosition {
     protected _initialValue: LogicValue | undefined = undefined
     protected _forceValue: LogicValue | undefined
     protected _color: WireColor = DEFAULT_WIRE_COLOR
+    public xrayInsideNode: MirrorNode<N> | undefined = undefined
 
     public constructor(
         public readonly component: Component,
+        parent: DrawableParent,
+        public xRayOutsideNode: MirrorNode<N> | undefined,
         nodeSpec: InputNodeRepr | OutputNodeRepr,
         public readonly group: NodeGroup<N> | undefined,
-        public readonly shortName: string,
-        public readonly fullName: string,
+        public readonly idName: string, // the one in comp.inputs[idName]
+        public readonly shortName: string, // the one drawn on the comp
+        public readonly fullName: string, // the one in the menu
         private _gridOffsetX: number,
         private _gridOffsetY: number,
         public readonly hasTriangle: boolean,
         relativePosition: Orientation,
         private readonly _leadLengthOverride: number | undefined,
+        public readonly labelOffset: NodeLabelOffsetProvider | undefined,
     ) {
-        super(component.parent)
+        super(parent)
         this.id = nodeSpec.id
         if ("force" in nodeSpec) {
             this._forceValue = toLogicValue(nodeSpec.force)
@@ -190,10 +197,12 @@ export abstract class NodeBase<N extends Node> extends DrawableWithPosition {
         const showForcedWarning = mode >= Mode.FULL && !isUnknown(this._value) && !isUnknown(this.value) && this._value !== this.value
         const parentOrientIsVertical = Orientation.isVertical(this.component.orient)
         const neutral = this.parent.editor.options.hideWireColors
-        drawWaypoint(g, ctx, this.posX, this.posY, this.nodeDisplayStyle, this.value, ctx.isMouseOver, neutral, showForced, showForcedWarning, parentOrientIsVertical)
+        drawWaypoint(g, this.posX, this.posY, this.nodeDisplayStyle, this.currentDrawValue, ctx.pointerOver, neutral, showForced, showForcedWarning ? [ctx, parentOrientIsVertical] : false)
     }
 
     protected abstract get nodeDisplayStyle(): NodeStyle
+
+    protected abstract get currentDrawValue(): LogicValue
 
     public get isAlive() {
         return this._isAlive
@@ -207,6 +216,10 @@ export abstract class NodeBase<N extends Node> extends DrawableWithPosition {
         const oldVisibleValue = this.value
         if (val !== this._value) {
             this._value = val
+            // TODO do something of the sort to check that the nodes are the same
+            // if (!this.isOutput() && this.xRayOutsideNode !== undefined && this.xRayOutsideNode.value !== val) {
+            //     console.error(`X-ray desync on node ${this.fullName}: inside node value is ${val} but outside node value is ${this.xRayOutsideNode.value}`)
+            // }
             this.propagateNewValueIfNeeded(oldVisibleValue)
         }
     }
@@ -269,6 +282,20 @@ export abstract class NodeBase<N extends Node> extends DrawableWithPosition {
         ) ?? [this.posX, this.posY]
     }
 
+    public setPositionAsXRayFor(node: Node, xrayScale: number) {
+        const [x, y] = node.drawCoordsInParentTransform
+        const [dx, dy] = !node.hasTriangle ? [0, 0] : (() => {
+            const d = 2
+            switch (node.orient) {
+                case "e": return [-d, 0]
+                case "w": return [d, 0]
+                case "s": return [0, -d]
+                case "n": return [0, d]
+            }
+        })()
+        super.trySetPosition((x - node.component.posX + dx) / xrayScale, (y - node.component.posY + dy) / xrayScale, false)
+    }
+
     /**
      * Points in the direction with which an outgoing wire from this node should start,
      * e.g. to draw a smooth curve
@@ -324,6 +351,7 @@ export abstract class NodeBase<N extends Node> extends DrawableWithPosition {
 
 }
 
+
 export class NodeIn extends NodeBase<NodeIn> {
 
     public readonly _tag = "_nodein"
@@ -375,8 +403,11 @@ export class NodeIn extends NodeBase<NodeIn> {
         return undefined
     }
 
-    protected propagateNewValue(__newValue: LogicValue) {
+    protected propagateNewValue(newValue: LogicValue) {
         this.component.setNeedsRecalc()
+        if (this.xrayInsideNode !== undefined) {
+            this.xrayInsideNode.value = newValue
+        }
     }
 
     protected get nodeDisplayStyle() {
@@ -384,14 +415,21 @@ export class NodeIn extends NodeBase<NodeIn> {
         return disconnected ? NodeStyle.IN_DISCONNECTED : NodeStyle.IN_CONNECTED
     }
 
+    protected get currentDrawValue() {
+        // doesn't matter, it's either empty or not drawn
+        return false
+    }
+
 }
 
+export type BranchPoint = [x: number, y: number, frac: number, wire: Wire]
 
 export class NodeOut extends NodeBase<NodeOut> {
 
     public readonly _tag = "_nodeout"
 
     private readonly _outgoingWires: Wire[] = []
+    private _branchPoints: BranchPoint[] | undefined = undefined
 
     public get isClock() {
         return false
@@ -402,6 +440,7 @@ export class NodeOut extends NodeBase<NodeOut> {
         const i = this._outgoingWires.indexOf(wire)
         if (i === -1) {
             this._outgoingWires.push(wire)
+            this.invalidateBranchPoints()
         }
     }
 
@@ -409,7 +448,80 @@ export class NodeOut extends NodeBase<NodeOut> {
         const i = this._outgoingWires.indexOf(wire)
         if (i !== -1) {
             this._outgoingWires.splice(i, 1)
+            this.invalidateBranchPoints()
         }
+    }
+
+    public invalidateBranchPoints() {
+        this._branchPoints = undefined
+    }
+
+    public get branchPoints() {
+        if (this._branchPoints === undefined) {
+            const branchPoints: BranchPoint[] = []
+
+            const numWires = this._outgoingWires.length
+            if (numWires > 1) {
+                const branchPointSet = new Set<string>()
+                for (let i = 0; i < numWires; i++) {
+                    const wire = this._outgoingWires[i]
+                    if (wire.isHidden) {
+                        continue
+                    }
+                    const possibleBranchPoints = wire.wirePath.possibleBranchPoints
+                    // console.log(`wire has pbp = ${JSON.stringify(possibleBranchPoints)}`)
+                    // console.log(`    and path = ${JSON.stringify(wire.wirePath.parts)}`)
+                    for (const possibleBranchPoint of possibleBranchPoints) {
+                        const stringRepr = `${possibleBranchPoint[0]},${possibleBranchPoint[1]}`
+                        if (branchPointSet.has(stringRepr)) {
+                            continue
+                        }
+                        let match = -1
+                        let matchFraction: undefined | number = 0
+                        // it is on another wire?
+                        for (let j = 0; j < numWires; j++) {
+                            const otherWire = this._outgoingWires[j]
+                            if (otherWire === wire || otherWire.isHidden) {
+                                continue
+                            }
+                            // console.log(`     checking ${JSON.stringify(possibleBranchPoint)}`)
+                            matchFraction = otherWire.wirePath.fractionIfOverPossibleBranchPoint(possibleBranchPoint)
+                            if (matchFraction !== undefined) {
+                                if (matchFraction > 1) {
+                                    matchFraction = otherWire.wirePath.fractionIfOverPossibleBranchPoint(possibleBranchPoint)
+                                }
+                                match = j
+                                break
+                            }
+                        }
+                        if (match !== -1 && matchFraction !== undefined) {
+                            // console.log(`     -> yes`)
+                            branchPointSet.add(stringRepr)
+                            const [x, y] = possibleBranchPoint
+
+                            // pick frontmost wire as reference
+                            if (i > match) {
+                                // update matchFraction for i, remove direction to match also from colinear segment if from same wire
+                                const otherMatchFraction = wire.wirePath.fractionIfOverPossibleBranchPoint([x, y])
+                                if (otherMatchFraction === undefined) {
+                                    console.warn("Cannot find fraction of branch point from on wire from which it came")
+                                } else {
+                                    match = i
+                                    matchFraction = otherMatchFraction
+                                }
+                            }
+                            const refWire = this._outgoingWires[match]
+                            branchPoints.push([x, y, matchFraction, refWire])
+                        } else {
+                            // console.log(`     -> no`)
+                        }
+                    }
+                }
+            }
+            // console.log(` -> bp for ${this.component.ref}.${this.shortName}: ${JSON.stringify(branchPoints)}`)
+            this._branchPoints = branchPoints
+        }
+        return this._branchPoints
     }
 
     public get outgoingWires(): readonly Wire[] {
@@ -482,6 +594,15 @@ export class NodeOut extends NodeBase<NodeOut> {
     protected get nodeDisplayStyle() {
         const disconnected = this._outgoingWires.length === 0
         return disconnected ? NodeStyle.OUT_DISCONNECTED : NodeStyle.OUT_CONNECTED
+    }
+
+    protected get currentDrawValue() {
+        if (this._outgoingWires.length === 0) {
+            return this.value
+        }
+
+        const refWire = this._outgoingWires[this._outgoingWires.length - 1]
+        return refWire.drawnValueAt(refWire.wirePath.length.cumFracOfPart[0])
     }
 
     public override pointerDoubleClicked(e: PointerEvent): InteractionResult {

@@ -1,15 +1,18 @@
 import * as t from "io-ts"
 import JSON5 from "json5"
+import type { ComponentForDef } from "../ComponentFactory"
 import type { ComponentKey, DefAndParams, LibraryButtonOptions, LibraryButtonProps, LibraryItem } from "../ComponentMenu"
 import { DrawParams, LogicEditor } from "../LogicEditor"
 import { PointerDragEvent } from "../UIEventManager"
 import { UIPermissions } from "../UIPermissions"
-import { COLOR_BACKGROUND, COLOR_COMPONENT_INNER_LABELS, COLOR_GROUP_SPAN, DrawingRect, GRID_STEP, drawClockInput, drawComponentName, drawLabel, drawWireLineToComponent, isTrivialNodeName, shouldDrawNodeLabel, useCompact } from "../drawutils"
+import { COLORCOMP_BACKGROUND_TRANSLUCENT, COLOR_BACKGROUND, COLOR_COMPONENT_INNER_LABELS, COLOR_GROUP_SPAN, COMPONENT_OUTLINE_THICKNESS, DrawingRect, GRID_STEP, XRayMode, XRayModes, drawClockInput, drawComponentName, drawLabel, drawWireLineToComponent, isTrivialNodeName, shouldDrawNodeLabel, useCompact } from "../drawutils"
 import { IconName, ImageName } from "../images"
 import { S, Template } from "../strings"
-import { ArrayFillUsing, ArrayOrDirect, EdgeTrigger, Expand, FixedArrayMap, HasField, HighImpedance, InteractionResult, LogicValue, LogicValueRepr, Mode, Unknown, brand, deepArrayEquals, isArray, isBoolean, isNumber, isRecord, isString, mergeWhereDefined, toLogicValueRepr, typeOrUndefined, validateJson } from "../utils"
-import { DrawContext, DrawContextExt, DrawableParent, DrawableWithDraggablePosition, DrawableWithPosition, GraphicsRendering, MenuData, MenuItem, MenuItemPlacement, MenuItems, Orientation, PositionSupportRepr } from "./Drawable"
-import { DEFAULT_WIRE_COLOR, Node, NodeBase, NodeIn, NodeOut, WireColor } from "./Node"
+import { ArrayFillUsing, ArrayOrDirect, EdgeTrigger, Expand, FixedArrayMap, HasField, HighImpedance, InteractionResult, LogicValue, LogicValueRepr, Mode, Orientation, Unknown, brand, deepArrayEquals, isArray, isBoolean, isNumber, isRecord, isString, mergeWhereDefined, toLogicValueRepr, typeOrUndefined, validateJson } from "../utils"
+import { DrawContext, DrawContextExt, Drawable, DrawableParent, DrawableWithDraggablePosition, DrawableWithPosition, GraphicsRendering, HasPosition, MenuData, MenuItem, MenuItemPlacement, MenuItems, PointerOverMode, PositionSupportRepr } from "./Drawable"
+import { DEFAULT_WIRE_COLOR, MirrorNode, Node, NodeBase, NodeIn, NodeOut, WireColor } from "./Node"
+import { Wire } from "./Wire"
+import { XRayNodesFor, XRayPosMaker, type XRay } from "./XRay"
 
 
 type NodeSeqRepr<TFullNodeRepr> =
@@ -88,7 +91,7 @@ type NodeIDsRepr<THasIn extends boolean, THasOut extends boolean>
  * Base representation of a component: position & repr of nodes
  */
 export type ComponentRepr<THasIn extends boolean, THasOut extends boolean> =
-    { type: string } & PositionSupportRepr & NodeIDsRepr<THasIn, THasOut>
+    { type: string } & PositionSupportRepr & NodeIDsRepr<THasIn, THasOut> & Partial<{ xray: string }>
 
 export const ComponentRepr = <THasIn extends boolean, THasOut extends boolean>(hasIn: THasIn, hasOut: THasOut) =>
     t.intersection([
@@ -97,6 +100,9 @@ export const ComponentRepr = <THasIn extends boolean, THasOut extends boolean>(h
         }),
         PositionSupportRepr,
         NodeIDsRepr(hasIn, hasOut),
+        t.partial({
+            xray: t.string,
+        }),
     ], "Component")
 
 export function isNodeArray<TNode extends Node>(obj: undefined | number | Node | ReadonlyGroupedNodeArray<TNode>): obj is ReadonlyGroupedNodeArray<TNode> {
@@ -198,16 +204,41 @@ export const ComponentNameRepr = typeOrUndefined(
     ])
 )
 
-type NodeOutDescOptions = { hasTriangle?: boolean, labelName?: string, leadLength?: number }
+export type NodeLabelOffsetProvider = (compOrient: Orientation) => readonly [number, number] | undefined
+type NodeOutDescOptions = { hasTriangle?: boolean, labelName?: string, labelOffset?: NodeLabelOffsetProvider, leadLength?: number }
 export type NodeOutDesc =
     | readonly [x: number, y: number, orient: Orientation, opts?: NodeOutDescOptions]
     | readonly [x: number, y: number, orient: Orientation, fullName?: string, opts?: NodeOutDescOptions]
 
 
-type NodeInDescOptions = { hasTriangle?: boolean, labelName?: string, leadLength?: number, prefersSpike?: boolean, isClock?: boolean }
+type NodeInDescOptions = { hasTriangle?: boolean, labelName?: string, labelOffset?: NodeLabelOffsetProvider, leadLength?: number, prefersSpike?: boolean, isClock?: boolean }
 export type NodeInDesc =
     | readonly [x: number, y: number, orient: Orientation, opts?: NodeInDescOptions]
     | readonly [x: number, y: number, orient: Orientation, fullName?: string, opts?: NodeInDescOptions]
+
+export function shiftWhenHorizontal(dx: number, dy: number): NodeLabelOffsetProvider {
+    return e => {
+        switch (e) {
+            case "e": return [dx, dy] as const
+            case "w": return [-dx, -dy] as const
+            case "s":
+            case "n":
+                return undefined
+        }
+    }
+}
+
+export function shiftWhenVertical(dx: number, dy: number): NodeLabelOffsetProvider {
+    return e => {
+        switch (e) {
+            case "s": return [dx, dy] as const
+            case "n": return [-dx, -dy] as const
+            case "e":
+            case "w":
+                return undefined
+        }
+    }
+}
 
 export type NodeDesc = NodeOutDesc | NodeInDesc
 export type NodeDescInGroup = readonly [x: number, y: number, shortNameOverride?: string, opts?: NodeInDescOptions]
@@ -276,15 +307,25 @@ export abstract class ComponentBase<
 > extends DrawableWithDraggablePosition {
 
     public readonly def: InstantiatedComponentDef<TRepr, TValue>
-    private _anchoredDrawables: DrawableWithDraggablePosition[] = []
+
     private _width: number
     private _height: number
-    private _state!: ComponentState
+    private _state: ComponentState
     private _value: TValue
+
     public readonly inputs: TInputNodes
     public readonly outputs: TOutputNodes
     public readonly inputGroups: Map<string, NodeGroup<NodeIn>>
     public readonly outputGroups: Map<string, NodeGroup<NodeOut>>
+
+    private _anchoredDrawables: DrawableWithDraggablePosition[] = []
+
+    private _xrayMode: XRayMode | undefined = undefined
+    private _cachedXRay: XRay | undefined = undefined
+    protected get cachedXRay() { return this._cachedXRay }
+    private _showingXRay = false
+    public get showingXRay() { return this._showingXRay }
+
 
     protected constructor(
         parent: DrawableParent,
@@ -297,6 +338,7 @@ export abstract class ComponentBase<
         this._width = def.size.gridWidth * GRID_STEP
         this._height = def.size.gridHeight * GRID_STEP
         this._value = def.initialValue(saved)
+        this._xrayMode = XRayModes.includes(saved?.xray as any) ? saved?.xray as XRayMode : undefined
 
         const ins = def.nodeRecs.ins
         const outs = def.nodeRecs.outs
@@ -333,7 +375,7 @@ export abstract class ComponentBase<
             this._state = ComponentState.SPAWNED
         } else {
             // newly placed
-            this.setSpawning()
+            this._state = this.setSpawning()
         }
 
         // build node specs either from scratch if new or from saved data
@@ -353,7 +395,7 @@ export abstract class ComponentBase<
 
         // setNeedsRecalc with a force propadation is needed:
         // * the forced propagation allows the current value (e.g. for InputBits)
-        //   to be set to the outputs, if if the "new" value is the same as the current one
+        //   to be set to the outputs, even if the "new" value is the same as the current one
         // * setNeedsRecalc schedules a recalculation (e.g. for Gates)
         if (!hasAnyPrecomputedInitialValues) {
             this.setNeedsRecalc(true)
@@ -365,6 +407,7 @@ export abstract class ComponentBase<
     public setSpawning() {
         this._state = ComponentState.SPAWNING
         this.parent.ifEditing?.moveMgr.setDrawableMoving(this)
+        return this._state
     }
 
     public setSpawned() {
@@ -409,6 +452,7 @@ export abstract class ComponentBase<
             ...typeHolder,
             ...super.toJSONBase(),
             ...this.buildNodesRepr(),
+            xray: this._xrayMode,
         }
     }
 
@@ -422,9 +466,12 @@ export abstract class ComponentBase<
         nodeRec: NodeRec<TDesc> | undefined,
         specs: readonly (InputNodeRepr | OutputNodeRepr)[],
         node: new (
-            parent: Component,
+            component: Component,
+            parent: DrawableParent,
+            xRayOutsideNode: MirrorNode<TNode> | undefined,
             nodeSpec: InputNodeRepr | OutputNodeRepr,
             group: NodeGroup<TNode> | undefined,
+            idName: string,
             shortName: string,
             fullName: string,
             _gridOffsetX: number,
@@ -432,6 +479,7 @@ export abstract class ComponentBase<
             hasTriangle: boolean,
             orient: Orientation,
             leadLength: number | undefined,
+            labelOffset: NodeLabelOffsetProvider | undefined,
         ) => TNode) {
 
         const nodes: Record<string, TNode | ReadonlyArray<TNode> | ReadonlyArray<ReadonlyArray<TNode>>> = {}
@@ -442,6 +490,7 @@ export abstract class ComponentBase<
             const makeNode = (group: NodeGroup<TNode> | undefined, shortName: string, desc: TDesc) => {
                 const spec = specs[nextSpecIndex++]
                 const [offsetX, offsetY, orient, nameOrOptions, options_] = desc
+                const idName = shortName
                 let nameOverride: string | undefined = undefined
                 let options: NodeInDescOptions | undefined = undefined
                 if (isString(nameOrOptions)) {
@@ -455,6 +504,7 @@ export abstract class ComponentBase<
                 const isClock = options?.isClock ?? false
                 const prefersSpike = options?.prefersSpike ?? false
                 const leadLength = options?.leadLength
+                const labelOffset = options?.labelOffset
                 const hasTriangle = options?.hasTriangle ?? false
                 if (group !== undefined && nameOverride !== undefined) {
                     // names in groups are considered short names to be used as labels
@@ -466,8 +516,11 @@ export abstract class ComponentBase<
                 const fullName = nameOverride === undefined ? shortName : nameOverride
                 const newNode = new node(
                     this,
+                    this.parent,
+                    undefined,
                     spec,
                     group,
+                    idName,
                     shortName,
                     fullName,
                     offsetX,
@@ -475,6 +528,7 @@ export abstract class ComponentBase<
                     hasTriangle,
                     orient,
                     leadLength,
+                    labelOffset,
                 )
                 if (prefersSpike || isClock) {
                     if (newNode instanceof NodeIn) {
@@ -860,11 +914,6 @@ export abstract class ComponentBase<
         // additional inside drawing
         opts?.drawInside?.(bounds)
 
-        // outline
-        g.lineWidth = 3
-        g.strokeStyle = ctx.borderColor
-        g.stroke(outline)
-
         // labels
         ctx.inNonTransformedFrame(ctx => {
             if (opts?.componentName?.[0] !== undefined) {
@@ -895,6 +944,153 @@ export abstract class ComponentBase<
 
             opts?.drawLabels?.(ctx, bounds)
         })
+
+        // xray and outline
+        this.doDrawXRayAndOutline(g, ctx, outline)
+    }
+
+    protected xrayScale(): number | undefined {
+        // override in subclasses to enable xray
+        return undefined
+    }
+
+    public get canShowXRay() {
+        return this.xrayScale() !== undefined
+    }
+
+    protected makeXRay(__level: number, __scale: number, __link: boolean): XRay | undefined {
+        // override in subclasses
+        return undefined
+    }
+
+    protected invalidateXRay() {
+        if (this._cachedXRay !== undefined) {
+            this._cachedXRay.disconnect()
+            this._cachedXRay = undefined
+        }
+    }
+
+    protected doDrawXRayAndOutline(
+        g: GraphicsRendering, ctx: DrawContext, outline: Path2D
+    ) {
+        this._showingXRay = false
+        const xrayMode = this._xrayMode ?? this.parent.editor.options.xray
+        const scale = this.xrayScale()
+        if (scale !== undefined && xrayMode !== "off") {
+            const limitFactor = 0.6 // draw components starting at this fraction of their normal size
+            const fadeSpan = 0.3 // span during which some transition alpha is applied
+            const myDrawParams = ctx.drawParams
+            const zoomExcess = xrayMode === "force" ? fadeSpan : myDrawParams.currentDrawingScale - limitFactor / scale
+            if (zoomExcess <= 0) {
+                this.invalidateXRay()
+            } else {
+                let xray = this._cachedXRay
+                if (xray === undefined) {
+                    xray = this._cachedXRay = this.makeXRay(myDrawParams.xrayLevel, scale, true)
+                }
+                if (xray !== undefined) {
+                    const composedDrawingScale = myDrawParams.currentDrawingScale * scale
+                    // updateSmallestDrawingScale(composedDrawingScale / this.parent.editor.userDrawingScale)
+                    const xrayDrawParams: DrawParams = {
+                        ...myDrawParams,
+                        currentCompUnderPointer: null,
+                        highlightedItems: undefined,
+                        currentDrawingScale: composedDrawingScale,
+                        xrayLevel: myDrawParams.xrayLevel + 1,
+                    }
+                    const backgroundAlpha = 0.95 * Math.min(1, zoomExcess / fadeSpan)
+                    const bk = COLORCOMP_BACKGROUND_TRANSLUCENT
+                    g.fillStyle = `rgb(${bk} ${bk} ${bk} / ${backgroundAlpha})`
+                    g.fill(outline)
+                    const oldTransform = g.getTransform()
+                    const oldAlpha = g.globalAlpha
+                    // const oldWireWidthFactor = getWireWidthFactor()
+
+                    try {
+                        g.translate(this.posX, this.posY)
+                        g.scale(scale, scale)
+                        g.globalAlpha = oldAlpha * Math.min(1, zoomExcess / fadeSpan)
+                        // setWireWidthFactor(oldWireWidthFactor / scale)
+                        xray.doDraw(g, xrayDrawParams)
+                    } finally {
+                        g.setTransform(oldTransform)
+                        g.globalAlpha = oldAlpha
+                        // setWireWidthFactor(oldWireWidthFactor)
+                    }
+                    this._showingXRay = true
+                }
+            }
+        }
+
+        // outline
+        const oldAlpha = g.globalAlpha
+        g.globalAlpha = oldAlpha * (this._showingXRay ? 0.2 : 1)
+        g.lineWidth = COMPONENT_OUTLINE_THICKNESS
+        g.strokeStyle = ctx.borderColor
+        g.stroke(outline)
+        g.globalAlpha = oldAlpha
+    }
+
+
+    protected makeXRayNodes<C extends Component = this>(this: C, xray: XRay, link: boolean): {
+        ins: {
+            [K in Exclude<keyof C["inputs"], "_all">]: XRayNodesFor<C["inputs"][K], NodeOut>
+        },
+        outs: {
+            [K in Exclude<keyof C["outputs"], "_all">]: XRayNodesFor<C["outputs"][K], NodeIn>
+        },
+        p: XRayPosMaker,
+    } {
+
+
+        const makeInternalNode = <NC extends typeof NodeIn | typeof NodeOut>(extNode: NodeIn | NodeOut, NodeClass: NC): InstanceType<NC> => {
+            const id = xray.nodeMgr.getFreeId()
+            const internalNode = new NodeClass(this, xray, extNode as any, { id }, undefined, extNode.idName, extNode.shortName, extNode.fullName, 0, 0, false, Orientation.invert(extNode.orient), 0, undefined) as InstanceType<NC>
+            xray.registerNewInternalNode(internalNode)
+            internalNode.setPositionAsXRayFor(extNode, xray.scale)
+            if (link) {
+                if (extNode.xrayInsideNode !== undefined) {
+                    console.warn(`Unexpectedly replacing existing xray node for ${extNode.shortName} in component of type ${Object.getPrototypeOf(this).constructor.name}`)
+                }
+                extNode.xrayInsideNode = internalNode
+            }
+            return internalNode
+        }
+
+        const makeAllInternalNodesFor = <N extends NodeIn | NodeOut>(insOrOuts: NamedNodes<N>, mkIntNode: (n: N) => MirrorNode<N>) => {
+            const intNodes: Record<string, MirrorNode<N> | MirrorNode<N>[] | MirrorNode<N>[][]> = {}
+            for (const [key, nodeOrNodes] of Object.entries(insOrOuts) as Array<[string, N | N[] | N[][]]>) {
+                if (key === "_all") { continue }
+                if (!isArray(nodeOrNodes)) {
+                    // single node
+                    intNodes[key] = mkIntNode(nodeOrNodes)
+                } else {
+                    if (nodeOrNodes.length === 0 || !isArray(nodeOrNodes[0])) {
+                        // grouped nodes
+                        intNodes[key] = (nodeOrNodes as N[]).map(mkIntNode)
+                    } else {
+                        // array of grouped nodes (e.g., mux)
+                        intNodes[key] = (nodeOrNodes as N[][]).map(nodes => nodes.map(mkIntNode))
+                    }
+                }
+            }
+            return intNodes
+        }
+
+        const ins = makeAllInternalNodesFor(this.inputs, (input: NodeIn) => {
+            const internalNode = makeInternalNode(input, NodeOut)
+            internalNode.value = input.value
+            return internalNode
+        })
+
+        const outs = makeAllInternalNodesFor(this.outputs, (output: NodeOut) => makeInternalNode(output, NodeIn))
+
+        const { width, height } = this.bounds()
+        // compute client size so that a wire at fractional position 1 is roughly touching the edge
+        const scaledHalfWidth = (width - COMPONENT_OUTLINE_THICKNESS - 1) / xray.scale / 2
+        const scaledHalfHeight = (height - COMPONENT_OUTLINE_THICKNESS - 1) / xray.scale / 2
+        const p = xray.newPosMaker(scaledHalfWidth, scaledHalfHeight)
+        return { ins: ins as any, outs: outs as any, p }
     }
 
     protected drawWireLineTo(g: GraphicsRendering, node: Node, bounds: DrawingRect) {
@@ -955,6 +1151,13 @@ export abstract class ComponentBase<
             case "n": return [elem.posXInParentTransform, bounds.top - offset]
             case "s": return [elem.posXInParentTransform, bounds.bottom + offset]
         }
+    }
+
+    protected override shouldBeHighlightedWith(compUnderPointer: Drawable): PointerOverMode {
+        if (!(compUnderPointer instanceof Wire)) {
+            return PointerOverMode.None
+        }
+        return compUnderPointer.startNode.component === this || compUnderPointer.endNode.component === this ? PointerOverMode.RelatedComponent : PointerOverMode.None
     }
 
     protected replaceWithComponent(newComp: Component): Component {
@@ -1021,11 +1224,13 @@ export abstract class ComponentBase<
         const componentList = this.parent.components
         const deleted = componentList.tryDelete(this)
         if (!deleted) {
-            console.warn("Could not delete old component")
+            console.warn("Could not delete old component, not found in component list")
         }
 
         // restore component properties
         newComp.setPosition(this.posX, this.posY, false)
+        newComp.doSetOrient(this.orient)
+        newComp._xrayMode = this._xrayMode
         newComp.setSpawned()
         const ref = this.ref
         if (ref !== undefined && !componentList.looksLikeAutoGeneratedId(this)) {
@@ -1036,7 +1241,7 @@ export abstract class ComponentBase<
 
         this.parent.ifEditing?.undoMgr.takeSnapshot()
         this.parent.ifEditing?.redrawMgr.requestRedraw({ why: "component replaced", component: newComp, invalidateMask: true, invalidateTests: true })
-
+        this.parent.editor.eventMgr.setCurrentComponentUnderPointer(newComp)
         return newComp
     }
 
@@ -1235,6 +1440,34 @@ export abstract class ComponentBase<
             makeNewTestCaseItems.push(["start", MenuData.sep()])
         }
 
+        const makeSetXRayModeContextMenuItem = (mode: XRayMode | undefined, caption: string): MenuItem => {
+            return MenuData.item(
+                this._xrayMode === mode ? "check" : "none",
+                caption,
+                () => {
+                    this._xrayMode = mode
+                    this.invalidateXRay()
+                    this.requestRedraw({ why: "xray mode changed" })
+                }
+            )
+        }
+
+        const xrayItems: MenuItems =
+            this.xrayScale() === undefined ? [] : [
+                ["end", MenuData.submenu("xray", s.XRayMode, [
+                    makeSetXRayModeContextMenuItem(undefined, s.XRayModeDefault),
+                    MenuData.sep(),
+                    makeSetXRayModeContextMenuItem("auto", s.XRayModeAuto),
+                    makeSetXRayModeContextMenuItem("force", s.XRayModeForce),
+                    makeSetXRayModeContextMenuItem("off", s.XRayModeOff),
+                    MenuData.sep(),
+                    MenuData.item("newwindow", s.XRayInNewWindow, () => {
+                        this.exportXRayToNewWindow()
+                    }),
+                ])],
+                ["end", MenuData.sep()],
+            ]
+
         const setRefItems: MenuItems =
             editor.mode < Mode.FULL ? [] : [
                 ["end", this.makeSetIdContextMenuItem()],
@@ -1250,12 +1483,7 @@ export abstract class ComponentBase<
             ]
 
         const deleteItem = MenuData.item("trash", s.Delete, () => {
-            const deleted = this.parent.components.tryDelete(this)
-            if (deleted) {
-                this.requestRedraw({ why: "deleted component", invalidateMask: true, invalidateTests: true })
-                return InteractionResult.SimpleChange
-            }
-            return InteractionResult.NoChange
+            return this.parent.editor.eventMgr.tryDeleteDrawable(this)
         }, "⌫", true)
 
         return [
@@ -1263,10 +1491,25 @@ export abstract class ComponentBase<
             ...makeNewComponentItems,
             ...makeNewTestCaseItems,
             ...this.makeOrientationAndPosMenuItems(),
+            ...xrayItems,
             ...setRefItems,
             ...resetItem,
             ["end", deleteItem],
         ]
+    }
+
+    private exportXRayToNewWindow() {
+        let xray = undefined
+        const scale = this.xrayScale()
+        if (scale !== undefined) {
+            xray = this.makeXRay(0, scale, false)
+        }
+        if (xray === undefined) {
+            console.warn("Could not create xray for export")
+            return
+        }
+
+        this.parent.editor.exportXRayToNewWindow(xray)
     }
 
     protected makeComponentSpecificContextMenuItems(): MenuItems {
@@ -1397,13 +1640,13 @@ export abstract class ParametrizedComponentBase<
     THasOut
 > {
 
-    private readonly _defP: SomeParamCompDef<TParamDefs>
+    private readonly _defP: SomeParametrizedComponentDef<TParamDefs>
 
     protected constructor(
         parent: DrawableParent,
         [instance, def]: [
             InstantiatedComponentDef<TRepr, TValue>,
-            SomeParamCompDef<TParamDefs>,
+            SomeParametrizedComponentDef<TParamDefs>,
         ],
         saved: TRepr | undefined
     ) {
@@ -1525,7 +1768,7 @@ export function groupVertical(orient: "e" | "w", x: number, yCenter: number, num
     const span = (num - 1) * spacing_
     const yTop = yCenter - span / 2
     return group(orient,
-        ArrayFillUsing(i => [x, yTop + i * spacing_, undefined, opts], num)
+        ArrayFillUsing(i => [x, yTop + i * spacing_, undefined, { ...opts }], num)
     )
 }
 
@@ -1545,7 +1788,7 @@ export function groupHorizontal(orient: "n" | "s", xCenter: number, y: number, n
     const span = (num - 1) * spacing_
     const xRight = xCenter + span / 2
     return group(orient,
-        ArrayFillUsing(i => [xRight - i * spacing_, y, undefined, opts], num)
+        ArrayFillUsing(i => [xRight - i * spacing_, y, undefined, { ...opts }], num)
     )
 }
 
@@ -1652,9 +1895,8 @@ export class ComponentDef<
     THasIn extends boolean = HasField<TInOutRecs, "ins">,
     THasOut extends boolean = HasField<TInOutRecs, "outs">,
     TRepr extends ReprWith<THasIn, THasOut, TProps> = ReprWith<THasIn, THasOut, TProps>,
-> implements InstantiatedComponentDef<TRepr, TValue> {
+> {
 
-    public readonly nodeRecs: TInOutRecs
     public readonly repr: t.Decoder<Record<string, unknown>, TRepr>
 
     public impl: (new (parent: DrawableParent, saved?: TRepr) => Component) = undefined as any
@@ -1662,18 +1904,15 @@ export class ComponentDef<
     public constructor(
         public readonly type: string,
         public readonly idPrefix: string,
+        hasIn: THasIn,
+        hasOut: THasOut,
         public readonly aults: TValueDefaults,
-        public readonly size: ComponentGridSize,
+        public readonly size: (params: InjectedParams) => ComponentGridSize,
         private readonly _buttonProps: LibraryButtonProps,
         private readonly _initialValue: (saved: t.TypeOf<t.TypeC<TProps>> | undefined, defaults: TValueDefaults) => TValue,
-        makeNodes: (size: ComponentGridSize, defaults: TValueDefaults) => TInOutRecs,
+        private readonly _makeNodes: (params: ComponentGridSize & InjectedParams, defaults: TValueDefaults) => TInOutRecs,
         repr?: TProps,
     ) {
-        const nodes = makeNodes(size, aults)
-        this.nodeRecs = nodes
-
-        const hasIn = ("ins" in nodes) as THasIn
-        const hasOut = ("outs" in nodes) as THasOut
         this.repr = makeComponentRepr(type, hasIn, hasOut, repr ?? ({} as TProps)) as any
     }
 
@@ -1681,11 +1920,25 @@ export class ComponentDef<
         return this.impl !== undefined
     }
 
+    public from(parent: DrawableParent): InstantiatedComponentDef<TRepr, TValue> {
+        const params = parent.componentCreationParams
+        const size = this.size(params)
+        const nodes = this._makeNodes({ ...size, ...params }, this.aults)
+        return {
+            type: this.type,
+            idPrefix: this.idPrefix,
+            size,
+            nodeRecs: nodes,
+            initialValue: saved => this._initialValue(saved, this.aults),
+            makeFromJSON: this.makeFromJSON.bind(this),
+        }
+    }
+
     public initialValue(saved?: TRepr): TValue {
         return this._initialValue(saved, this.aults)
     }
 
-    public button(visual: ComponentKey & ImageName | [ComponentKey, ImageName], options?: LibraryButtonOptions): LibraryItem {
+    public button(visual: (ComponentKey & ImageName) | [ComponentKey, ImageName], options?: LibraryButtonOptions): LibraryItem {
         return {
             type: this.type,
             visual,
@@ -1694,42 +1947,58 @@ export class ComponentDef<
         }
     }
 
-    public make<TComp extends Component>(parent: DrawableParent): TComp {
-        const comp = new this.impl(parent)
+    public make(parent: DrawableParent): ComponentForDef<this> {
+        const comp = new this.impl(parent) as ComponentForDef<this>
         parent.components.add(comp)
-        return comp as TComp
+        return comp
     }
 
-    public makeFromJSON(parent: DrawableParent, data: Record<string, unknown>): Component | undefined {
+    public makeFromJSON(parent: DrawableParent, data: Record<string, unknown>): ComponentForDef<this> | undefined {
         const validated = validateJson(data, this.repr, this.impl!.name ?? "component")
         if (validated === undefined) {
             return undefined
         }
-        const comp = new this.impl(parent, validated)
+        const comp = new this.impl(parent, validated) as ComponentForDef<this>
         parent.components.add(comp)
         return comp
     }
+
+    public makeSpawned(parent: DrawableParent, validatedId: string, x: number | HasPosition, y: number | HasPosition, orient?: Orientation): ComponentForDef<this> {
+        const comp = this.make(parent)
+        if (!isNumber(x)) { x = x.posX }
+        if (!isNumber(y)) { y = y.posY }
+        comp.setPosition(x, y, false)
+        comp.setSpawned()
+        parent.components.changeIdOf(comp, validatedId)
+        if (orient !== undefined) {
+            comp.doSetOrient(orient)
+        }
+        return comp
+    }
+
 }
 
 
 export function defineComponent<
+    THasIn extends boolean,
+    THasOut extends boolean,
     TInOutRecs extends InOutRecs,
     TValue,
     TValueDefaults extends Record<string, unknown> = Record<string, unknown>,
     TProps extends t.Props = {},
 >(
-    type: string,
+    type: string, hasIn: THasIn, hasOut: THasOut,
     { idPrefix, button, repr, valueDefaults, size, makeNodes, initialValue }: {
         idPrefix: string,
         button: LibraryButtonProps,
         repr?: TProps,
         valueDefaults: TValueDefaults,
-        size: ComponentGridSize,
-        makeNodes: (size: ComponentGridSize, defaults: TValueDefaults) => TInOutRecs,
+        size: (params: InjectedParams) => ComponentGridSize,
+        makeNodes: (size: ComponentGridSize & InjectedParams, defaults: TValueDefaults) => TInOutRecs,
         initialValue?: (saved: t.TypeOf<t.TypeC<TProps>> | undefined, defaults: TValueDefaults) => TValue
     }
 ) {
-    return new ComponentDef(type, idPrefix, valueDefaults, size, button, initialValue ?? (() => undefined as TValue), makeNodes, repr)
+    return new ComponentDef(type, idPrefix, hasIn, hasOut, valueDefaults, size, button, initialValue ?? (() => undefined as TValue), makeNodes, repr)
 }
 
 
@@ -1746,7 +2015,7 @@ export function defineAbstractComponent<
         button: { imgWidth: number },
         repr: TProps,
         valueDefaults: TValueDefaults,
-        size: ComponentGridSize,
+        size: (params: InjectedParams) => ComponentGridSize,
         makeNodes: (...args: TArgs) => TInOutRecs,
         initialValue: (saved: TRepr | undefined, defaults: TValueDefaults) => TValue
     },
@@ -1763,7 +2032,7 @@ export function defineAbstractComponent<
 // ParameterizedComponentDef and friends
 //
 
-export type SomeParamCompDef<TParamDefs extends Record<string, ParamDef<unknown>>> = ParametrizedComponentDef<boolean, boolean, t.Props, TParamDefs, InOutRecs, unknown, any, ParamsFromDefs<TParamDefs>, any, any>
+export type SomeParametrizedComponentDef<TParamDefs extends Record<string, ParamDef<unknown>>> = ParametrizedComponentDef<boolean, boolean, t.Props, TParamDefs, InOutRecs, unknown, any, ParamsFromDefs<TParamDefs>, any, any>
 
 export class ParamDef<T> {
 
@@ -1815,6 +2084,14 @@ function paramDefaults<TParamDefs extends Record<string, ParamDef<unknown>>>(def
     return Object.fromEntries(Object.entries(defs).map(([k, v]) => [k, v.defaultValue])) as any
 }
 
+function defaultInjectedParams() {
+    return {
+        isXRay: false,
+    }
+}
+
+export type InjectedParams = ReturnType<typeof defaultInjectedParams>
+
 export class ParametrizedComponentDef<
     THasIn extends boolean,
     THasOut extends boolean,
@@ -1832,7 +2109,7 @@ export class ParametrizedComponentDef<
     public readonly aults: TValueDefaults & TParams
     public readonly repr: t.Decoder<Record<string, unknown>, TRepr>
 
-    public impl: (new (parent: DrawableParent, params: TResolvedParams, saved?: TRepr) => Component & TResolvedParams) = undefined as any
+    public impl: (new (parent: DrawableParent, params: TResolvedParams & InjectedParams, saved?: TRepr) => Component & TResolvedParams) = undefined as any
 
     public constructor(
         public readonly type: string,
@@ -1844,9 +2121,9 @@ export class ParametrizedComponentDef<
         repr: TProps,
         valueDefaults: TValueDefaults,
         public readonly paramDefs: TParamDefs,
-        public readonly size: (params: TResolvedParams) => ComponentGridSize,
-        private readonly _makeNodes: (params: TResolvedParams & ComponentGridSize, valueDefaults: TValueDefaults) => TInOutRecs,
-        private readonly _initialValue: (saved: TRepr | undefined, params: TResolvedParams) => TValue,
+        public readonly size: (params: TResolvedParams & InjectedParams) => ComponentGridSize,
+        private readonly _makeNodes: (params: TResolvedParams & InjectedParams & ComponentGridSize, valueDefaults: TValueDefaults) => TInOutRecs,
+        private readonly _initialValue: (saved: TRepr | undefined, params: TResolvedParams & InjectedParams, defaults: TValueDefaults) => TValue,
         private readonly _validateParams: (params: TParams, jsonType: string | undefined, defaults: TParamDefs) => TResolvedParams,
     ) {
         this.defaultParams = paramDefaults(paramDefs) as TParams
@@ -1858,7 +2135,7 @@ export class ParametrizedComponentDef<
         return this.impl !== undefined
     }
 
-    public with(params: TResolvedParams): [InstantiatedComponentDef<TRepr, TValue>, this] {
+    public with(params: TResolvedParams & InjectedParams): [InstantiatedComponentDef<TRepr, TValue>, this] {
         const size = this.size(params)
         const nodes = this._makeNodes({ ...size, ...params }, this.aults)
         return [{
@@ -1866,7 +2143,7 @@ export class ParametrizedComponentDef<
             idPrefix: this.idPrefix,
             size,
             nodeRecs: nodes,
-            initialValue: (saved: TRepr | undefined) => this._initialValue(saved, params),
+            initialValue: (saved: TRepr | undefined) => this._initialValue(saved, params, this.aults),
             makeFromJSON: this.makeFromJSON.bind(this),
         }, this]
     }
@@ -1881,27 +2158,41 @@ export class ParametrizedComponentDef<
         }
     }
 
-    public make<TComp extends Component>(parent: DrawableParent, params?: TParams): TComp {
-        const fullParams = params === undefined ? this.defaultParams : mergeWhereDefined(this.defaultParams, params)
-        const resolvedParams = this.doValidate(fullParams, undefined)
-        const comp = new this.impl(parent, resolvedParams)
+    public make(parent: DrawableParent, componentParams?: TParams): ComponentForDef<this> {
+        const fullParams = componentParams === undefined ? this.defaultParams : mergeWhereDefined(this.defaultParams, componentParams)
+        const injectedParams = parent.componentCreationParams
+        const resolvedParams = this.doValidate(fullParams, injectedParams, undefined)
+        const comp = new this.impl(parent, resolvedParams) as unknown as ComponentForDef<this>
         parent.components.add(comp)
-        return comp as unknown as TComp
+        return comp
     }
 
-    public makeFromJSON(parent: DrawableParent, data: Record<string, unknown>): Component | undefined {
+    public makeFromJSON(parent: DrawableParent, data: Record<string, unknown>): ComponentForDef<this> | undefined {
         const validated = validateJson(data, this.repr, this.impl!.name ?? "component")
         if (validated === undefined) {
             return undefined
         }
         const fullParams = mergeWhereDefined(this.defaultParams, validated)
-        const resolvedParams = this.doValidate(fullParams, validated.type)
-        const comp = new this.impl(parent, resolvedParams, validated)
+        const resolvedParams = this.doValidate(fullParams, { isXRay: false }, validated.type)
+        const comp = new this.impl(parent, resolvedParams, validated) as unknown as ComponentForDef<this>
         parent.components.add(comp)
         return comp
     }
 
-    private doValidate(fullParams: TParams, jsonType: string | undefined) {
+    public makeSpawned(parent: DrawableParent, validatedId: string, x: number | HasPosition, y: number | HasPosition, orient?: Orientation, componentParams?: TParams): ComponentForDef<this> {
+        const comp = this.make(parent, componentParams)
+        if (!isNumber(x)) { x = x.posX }
+        if (!isNumber(y)) { y = y.posY }
+        comp.setPosition(x, y, false)
+        comp.setSpawned()
+        parent.components.changeIdOf(comp, validatedId)
+        if (orient !== undefined) {
+            comp.doSetOrient(orient)
+        }
+        return comp
+    }
+
+    private doValidate(fullParams: TParams, injectedParams: InjectedParams, jsonType: string | undefined): TResolvedParams & InjectedParams {
         const className = this.impl?.name ?? "component"
         // auto validate params
         fullParams = Object.fromEntries(Object.entries(this.paramDefs).map(([paramName, paramDef]) => {
@@ -1914,7 +2205,8 @@ export class ParametrizedComponentDef<
                 return [paramName, validatedValue]
             }
         })) as TParams
-        return this._validateParams(fullParams, jsonType, this.paramDefs)
+        const validatedParams = this._validateParams(fullParams, jsonType, this.paramDefs)
+        return { ...validatedParams, ...injectedParams }
     }
 
 }
@@ -1926,14 +2218,13 @@ export type Params<TDef>
     : TDef extends { paramDefs: infer TParamDefs extends Record<string, ParamDef<unknown>> } ? ParamsFromDefs<TParamDefs>
     : never
 
-export type ResolvedParams<TDef>
+export type ResolvedParams<TDef> = InjectedParams & (
     // case: Parameterized component def
-    = TDef extends ParametrizedComponentDef<infer __THasIn, infer __THasOut, infer __TProps, infer __TParamDefs, infer __TInOutRecs, infer __TValue, infer __TValueDefaults, infer __TParams, infer TResolvedParams, infer __TWeakRepr> ? TResolvedParams
+    TDef extends ParametrizedComponentDef<infer __THasIn, infer __THasOut, infer __TProps, infer __TParamDefs, infer __TInOutRecs, infer __TValue, infer __TValueDefaults, infer __TParams, infer TResolvedParams, infer __TWeakRepr> ? TResolvedParams
     // case: Abstract base component def
     : TDef extends { validateParams?: infer TFunc } ?
     TFunc extends (...args: any) => any ? ReturnType<TFunc> : never
-    : never
-
+    : never)
 
 type ReprWith<
     THasIn extends boolean,
@@ -1963,9 +2254,9 @@ export function defineParametrizedComponent<
         valueDefaults: TValueDefaults,
         params: TParamDefs,
         validateParams?: (params: TParams, jsonType: string | undefined, defaults: TParamDefs) => TResolvedParams,
-        size: (params: TResolvedParams) => ComponentGridSize,
-        makeNodes: (params: TResolvedParams & ComponentGridSize, valueDefaults: TValueDefaults) => TInOutRecs,
-        initialValue: (saved: TRepr | undefined, params: TResolvedParams) => TValue,
+        size: (params: TResolvedParams & InjectedParams) => ComponentGridSize,
+        makeNodes: (params: TResolvedParams & InjectedParams & ComponentGridSize, valueDefaults: TValueDefaults) => TInOutRecs,
+        initialValue: (saved: TRepr | undefined, params: TResolvedParams & InjectedParams, defaults: TValueDefaults) => TValue,
     },
 ) {
     return new ParametrizedComponentDef(type, idPrefix, hasIn, hasOut, variantName, button, repr, valueDefaults, params, size, makeNodes, initialValue, validateParams ?? ((params: TParams) => params as unknown as TResolvedParams))
@@ -1998,8 +2289,8 @@ export function defineAbstractParametrizedComponent<
         params: TParamDefs,
         validateParams?: (params: TParams, jsonType: string | undefined, defaults: TParamDefs) => TResolvedParams
         size: (params: TResolvedParams) => ComponentGridSize,
-        makeNodes: (params: TResolvedParams & ComponentGridSize, valueDefaults: TValueDefaults) => TInOutRecs,
-        initialValue: (saved: TRepr | undefined, params: TResolvedParams) => TValue,
+        makeNodes: (params: TResolvedParams & ComponentGridSize & InjectedParams, valueDefaults: TValueDefaults) => TInOutRecs,
+        initialValue: (saved: TRepr | undefined, params: TResolvedParams, defaults: TValueDefaults) => TValue,
     },
 ) {
     return items

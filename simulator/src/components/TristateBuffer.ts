@@ -1,5 +1,5 @@
 import * as t from "io-ts"
-import { COLOR_BACKGROUND, COLOR_COMPONENT_BORDER, COLOR_MOUSE_OVER, drawWireLineToComponent, GRID_STEP } from "../drawutils"
+import { COLOR_BACKGROUND, COMPONENT_OUTLINE_THICKNESS, drawWireLineToComponent, GRID_STEP } from "../drawutils"
 import { div, mods, tooltipContent } from "../htmlgen"
 import { S } from "../strings"
 import { HighImpedance, isHighImpedance, isUnknown, LogicValue, typeOrUndefined, Unknown } from "../utils"
@@ -22,19 +22,22 @@ export const TristateBufferDef =
             return { controlPinsAtBottom: bottom }
         },
         size: () => ({ gridWidth: 4, gridHeight: 4 }),
-        makeNodes: ({ controlPinsAtBottom }) => ({
-            ins: {
-                In: [-4, 0, "w", { leadLength: 20 }],
-                E: [0,
-                    controlPinsAtBottom ? 3 : -3,
-                    controlPinsAtBottom ? "s" : "n",
-                    "E (Enable)", { leadLength: 20 },
-                ],
-            },
-            outs: {
-                Out: [+4, 0, "e", { leadLength: 20 }],
-            },
-        }),
+        makeNodes: ({ controlPinsAtBottom, isXRay }) => {
+            const eDist = isXRay ? 2 : 3
+            return {
+                ins: {
+                    In: [-4, 0, "w", { leadLength: 20 }],
+                    E: [0,
+                        controlPinsAtBottom ? eDist : -eDist,
+                        controlPinsAtBottom ? "s" : "n",
+                        "E (Enable)", { leadLength: isXRay ? 10 : 20 },
+                    ],
+                },
+                outs: {
+                    Out: [+4, 0, "e", { leadLength: 20 }],
+                },
+            }
+        },
         initialValue: () => HighImpedance as LogicValue,
     })
 
@@ -94,8 +97,8 @@ export class TristateBuffer extends ParametrizedComponentBase<TristateBufferRepr
         const gateLeft = this.posX - gateWidth / 2
         const gateRight = this.posX + gateWidth / 2
         g.fillStyle = COLOR_BACKGROUND
-        g.strokeStyle = ctx.isMouseOver ? COLOR_MOUSE_OVER : COLOR_COMPONENT_BORDER
-        g.lineWidth = 3
+        g.strokeStyle = ctx.borderColor
+        g.lineWidth = COMPONENT_OUTLINE_THICKNESS
 
         g.beginPath()
         g.moveTo(gateLeft, top)

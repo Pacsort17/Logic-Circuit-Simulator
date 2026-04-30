@@ -1,11 +1,11 @@
 import { Component, ComponentBase, ComponentName, isNodeArray, ReadonlyGroupedNodeArray } from "./components/Component"
 import { LedColor } from "./components/DisplayBar"
-import { DrawableWithPosition, DrawContext, DrawContextExt, GraphicsRendering, HasPosition, Orientation } from "./components/Drawable"
-import { Node, WireColor } from "./components/Node"
+import { DrawableWithPosition, DrawContext, DrawContextExt, GraphicsRendering, HasPosition, PointerOverMode } from "./components/Drawable"
+import { Node, NodeBase, WireColor } from "./components/Node"
 import { RectangleColor } from "./components/Rectangle"
 import { Waypoint } from "./components/Wire"
 import { LogicEditor } from "./LogicEditor"
-import { EdgeTrigger, FixedArray, FixedArrayAssert, InBrowser, isArray, isHighImpedance, isNumber, isString, isUnknown, LogicValue, Mode, Unknown } from "./utils"
+import { EdgeTrigger, FixedArray, FixedArrayAssert, InBrowser, isArray, isHighImpedance, isNumber, isString, isUnknown, LogicValue, Mode, Orientation, ParentType, Unknown } from "./utils"
 
 
 //
@@ -96,6 +96,7 @@ export const USER_COLORS = {
 }
 
 export let COLOR_BACKGROUND: ColorString
+export let COLORCOMP_BACKGROUND_TRANSLUCENT: number
 export let COLOR_OFF_BACKGROUND: ColorString
 export let COLOR_BACKGROUND_UNUSED_REGION: ColorString
 export let COLOR_BACKGROUND_INVALID: ColorString
@@ -112,6 +113,8 @@ export let COLOR_GROUP_SPAN: ColorString
 export let COLOR_WIRE_BORDER: ColorString
 export let COLOR_MOUSE_OVER: ColorString
 export let COLOR_MOUSE_OVER_NORMAL: ColorString
+export let COLOR_MOUSE_OVER_SAME_ORIGIN: ColorString
+export let COLOR_MOUSE_OVER_RELATED: ColorString
 export let COLOR_MOUSE_OVER_DANGER: ColorString
 export let COLOR_NODE_MOUSE_OVER: ColorString
 export let COLORCOMPS_FULL: ColorComponentsRGB
@@ -140,14 +143,16 @@ export const OPACITY_HIDDEN_ITEMS = 0.3
 let _currentModeIsDark = false
 doSetColors(_currentModeIsDark)
 
-export function setDarkMode(darkMode: boolean, force: boolean) {
-    if (force || darkMode !== _currentModeIsDark) {
+export function setDarkMode(darkMode: boolean, forceSet: boolean, dontRedrawNow: boolean) {
+    if (forceSet || darkMode !== _currentModeIsDark) {
         doSetColors(darkMode)
-        for (const editor of LogicEditor.allConnectedEditors) {
-            editor.wrapHandler(() => {
-                editor.setDark(darkMode)
-                editor.editTools.redrawMgr.requestRedraw({ why: "dark/light mode switch" })
-            })()
+        if (!dontRedrawNow) {
+            for (const editor of LogicEditor.allConnectedEditors) {
+                editor.wrapHandler(() => {
+                    editor.setDark(darkMode)
+                    editor.editTools.redrawMgr.requestRedraw({ why: "dark/light mode switch" })
+                })()
+            }
         }
     }
 }
@@ -161,6 +166,7 @@ function doSetColors(darkMode: boolean) {
         // Light Theme
         COLOR_BACKGROUND = ColorString(0xFF)
         COLOR_OFF_BACKGROUND = ColorString(0xDF)
+        COLORCOMP_BACKGROUND_TRANSLUCENT = 0xEF
         COLOR_BACKGROUND_INVALID = ColorString([0xFF, 0xBB, 0xBB])
         COLOR_BACKGROUND_UNUSED_REGION = ColorString(0xEE)
         COLOR_BORDER = ColorString(200)
@@ -175,6 +181,8 @@ function doSetColors(darkMode: boolean) {
         COLOR_WIRE_BORDER = ColorString(80)
         COLOR_MOUSE_OVER_NORMAL = ColorString([0, 0x7B, 0xFF])
         COLOR_MOUSE_OVER_DANGER = ColorString([194, 34, 14])
+        COLOR_MOUSE_OVER_SAME_ORIGIN = ColorString([117, 192, 255])
+        COLOR_MOUSE_OVER_RELATED = ColorString([0, 89, 176])
         COLOR_NODE_MOUSE_OVER = ColorString([128, 128, 128, 0.5])
         COLORCOMPS_FULL = [255, 193, 7]
         COLOR_DARK_RED = ColorString([180, 0, 0])
@@ -201,6 +209,7 @@ function doSetColors(darkMode: boolean) {
         // Dark Theme
         COLOR_BACKGROUND = USER_COLORS.COLOR_BACKGROUND ?? ColorString(30)
         COLOR_OFF_BACKGROUND = ColorString(60)
+        COLORCOMP_BACKGROUND_TRANSLUCENT = 55, 55, 55
         COLOR_BACKGROUND_INVALID = ColorString([0xA8, 0x14, 0x14])
         COLOR_BACKGROUND_UNUSED_REGION = ColorString(55)
         COLOR_BORDER = ColorString(0x55)
@@ -215,6 +224,8 @@ function doSetColors(darkMode: boolean) {
         COLOR_WIRE_BORDER = ColorString(175)
         COLOR_MOUSE_OVER_NORMAL = ColorString([0, 0x7B, 0xFF])
         COLOR_MOUSE_OVER_DANGER = ColorString([194, 34, 14])
+        COLOR_MOUSE_OVER_SAME_ORIGIN = ColorString([117, 192, 255])
+        COLOR_MOUSE_OVER_RELATED = ColorString([0, 89, 176])
         COLOR_NODE_MOUSE_OVER = ColorString([128, 128, 128, 0.5])
         COLORCOMPS_FULL = [255, 193, 7]
         COLOR_DARK_RED = ColorString([180, 0, 0])
@@ -433,6 +444,11 @@ export function isTrivialNodeName(name: string | undefined): boolean {
 // DRAWING
 //
 
+export const XRayModes = ["auto", "force", "off"] as const
+export type XRayMode = typeof XRayModes[number]
+
+export const COMPONENT_OUTLINE_THICKNESS = 3
+
 // Adding to current path
 
 export function triangle(g: GraphicsRendering, x0: number, y0: number, x1: number, y1: number, x2: number, y2: number) {
@@ -445,6 +461,15 @@ export function triangle(g: GraphicsRendering, x0: number, y0: number, x1: numbe
 export function circle(g: GraphicsRendering, cx: number, cy: number, d: number) {
     const r = d / 2
     g.ellipse(cx, cy, r, r, 0, 0, 2 * Math.PI)
+}
+
+export function diamond(g: GraphicsRendering, cx: number, cy: number, d: number) {
+    const r = d / 2
+    g.moveTo(cx, cy - r)
+    g.lineTo(cx - r, cy)
+    g.lineTo(cx, cy + r)
+    g.lineTo(cx + r, cy)
+    g.closePath()
 }
 
 // Stroking/filling
@@ -464,10 +489,11 @@ export function strokeBezier(g: GraphicsRendering, x0: number, y0: number, ancho
 }
 
 export function whatToDrawForNode(node: Node): { drawLabel: boolean, drawLead: boolean, drawTriangle: boolean, drawHiddenMark: boolean } {
+    const isInXRay = node.parent.type === ParentType.XRAY
     const editor = node.parent.editor
     const wires = node.connectedWires
     const connected = wires.length > 0
-    if (editor.mode <= Mode.TRYOUT && !connected && !editor.options.showDisconnectedPins) {
+    if (!connected && (isInXRay || (editor.mode <= Mode.TRYOUT && !editor.options.showDisconnectedPins))) {
         return { drawLabel: false, drawLead: false, drawTriangle: false, drawHiddenMark: false }
     }
     const drawHiddenMark = connected && wires.some(w => w.isHidden)
@@ -554,29 +580,59 @@ export function drawStraightWireLine(g: GraphicsRendering, x0: number, y0: numbe
     g.beginPath()
     g.moveTo(x0, y0)
     g.lineTo(x1, y1)
-    strokeWireOutlineAndSingleValue(g, value, color, neutral, timeFraction)
+    strokeWireOutlineAndSingleValue(g, value, color, neutral, timeFraction, 0)
 }
 
 
-export function strokeWireOutlineAndSingleValue(g: GraphicsRendering, value: LogicValue, color: WireColor, neutral: boolean, timeFraction: number | undefined) {
-    strokeWireOutline(g, color, false)
-    strokeWireValue(g, value, undefined, neutral, timeFraction)
+export function strokeWireOutlineAndSingleValue(g: GraphicsRendering, value: LogicValue, color: WireColor, neutral: boolean, timeFraction: number | undefined, thinnerBy: number) {
+    strokeWireOutline(g, color, undefined, thinnerBy)
+    strokeWireValue(g, value, undefined, neutral, timeFraction, thinnerBy * 0.5)
+}
+
+let _smallestDrawingScale = 1
+
+export function updateSmallestDrawingScale(scale: number) {
+    if (scale < _smallestDrawingScale) {
+        _smallestDrawingScale = scale
+    }
+}
+
+export function resetSmallestDrawingScale() {
+    _smallestDrawingScale = 1
+}
+
+export function getSmallestDrawingScale() {
+    return _smallestDrawingScale
+}
+
+let _wireWidthFactor = 1
+
+export function getWireWidthFactor() {
+    return _wireWidthFactor
+}
+
+export function setWireWidthFactor(f: number) {
+    if (f !== _wireWidthFactor) {
+        // console.log("new width factor: " + f)
+    }
+    _wireWidthFactor = f
 }
 
 /**
  * Draws the outline of a wire.
  * @param isMouseOver determines whether the border color is thicker with the mouse-over color
  */
-export function strokeWireOutline(g: GraphicsRendering, color: WireColor, isMouseOver: boolean) {
+export function strokeWireOutline(g: GraphicsRendering, color: WireColor, colorIfPointerOver: string | undefined, thinnerBy: number
+) {
     const oldLineCap = g.lineCap
     g.lineCap = "butt"
 
-    const mainStrokeWidth = WIRE_WIDTH / 2
-    if (isMouseOver) {
-        g.lineWidth = mainStrokeWidth + 2
-        g.strokeStyle = COLOR_MOUSE_OVER
+    const mainStrokeWidth = WIRE_WIDTH / 2 - thinnerBy
+    if (colorIfPointerOver !== undefined) {
+        g.lineWidth = (mainStrokeWidth + 2) * _wireWidthFactor
+        g.strokeStyle = colorIfPointerOver
     } else {
-        g.lineWidth = mainStrokeWidth
+        g.lineWidth = mainStrokeWidth * _wireWidthFactor
         g.strokeStyle = COLOR_WIRE[color]
     }
 
@@ -594,12 +650,12 @@ export function strokeWireOutline(g: GraphicsRendering, color: WireColor, isMous
  * @param timeFraction undefined to show no animation within the value being propagated, or a number between 0 and 1 to show an dashed line animation
  * @param path undefined to draw the current path in the context; otherwise, the path to draw
  */
-export function strokeWireValue(g: GraphicsRendering, value: LogicValue, lengthToDrawAndTotal: [number, number] | undefined, neutral: boolean, timeFraction: number | undefined) {
+export function strokeWireValue(g: GraphicsRendering, value: LogicValue, lengthToDrawAndTotal: [number, number] | undefined, neutral: boolean, timeFraction: number | undefined, thinnerBy: number) {
     const oldLineCap = g.lineCap
     g.lineCap = "butt"
 
     // inner value
-    g.lineWidth = WIRE_WIDTH / 2 - 2
+    g.lineWidth = (WIRE_WIDTH / 2 - 2 - thinnerBy) * _wireWidthFactor
     const [baseColor, altColor] = neutral ? [COLOR_UNKNOWN, COLOR_UNKNOWN_ALT] : colorsForLogicValue(value)
     g.strokeStyle = baseColor
     const animationDashSize = 20
@@ -636,6 +692,22 @@ export function strokeWireValue(g: GraphicsRendering, value: LogicValue, lengthT
     g.lineCap = oldLineCap
 }
 
+export function drawComponentIDs(g: GraphicsRendering, components: Generator<Component>) {
+    g.group("refs", () => {
+        g.font = 'bold 14px sans-serif'
+        g.strokeStyle = "rgb(255 255 255 / 0.8)"
+        g.lineWidth = 3
+        g.fillStyle = COLOR_COMPONENT_ID
+        g.textAlign = 'center'
+        for (const comp of components) {
+            if (comp.ref !== undefined && !comp.showingXRay) {
+                strokeTextVAlign(g, TextVAlign.middle, comp.ref, comp.posX, comp.posY)
+                fillTextVAlign(g, TextVAlign.middle, comp.ref, comp.posX, comp.posY)
+            }
+        }
+    })
+}
+
 export function distSquaredToWaypointIfOver(x: number, y: number, waypointX: number, waypointY: number, moreTolerant: boolean): number | undefined {
     const distSq = distSquared(x, y, waypointX, waypointY)
     const hitRadiusSquared = moreTolerant ? WAYPOINT_HIT_RADIUS_SQUARED_TOLERANT : WAYPOINT_HIT_RADIUS_SQUARED
@@ -652,9 +724,10 @@ export enum NodeStyle {
     OUT_DISCONNECTED,
     IN_OUT,
     WAYPOINT,
+    BRANCH_POINT,
 }
 
-export function drawWaypoint(g: GraphicsRendering, ctx: DrawContext, x: number, y: number, style: NodeStyle, value: LogicValue, isMouseOver: boolean, neutral: boolean, showForced: boolean, showForcedWarning: boolean, parentOrientIsVertical: boolean) {
+export function drawWaypoint(g: GraphicsRendering, x: number, y: number, style: NodeStyle, value: LogicValue, pointerOver: PointerOverMode, neutral: boolean, showForced: boolean, showForcedWarning: false | [ctx: DrawContext, parentOrientIsVertical: boolean]) {
 
     const [circleColor, thickness] =
         showForced
@@ -664,21 +737,23 @@ export function drawWaypoint(g: GraphicsRendering, ctx: DrawContext, x: number, 
     g.strokeStyle = circleColor
     g.lineWidth = thickness
     g.fillStyle = style === NodeStyle.IN_DISCONNECTED ? COLOR_BACKGROUND : (neutral ? COLOR_UNKNOWN : colorForLogicValue(value))
+    const drawShape = style === NodeStyle.WAYPOINT ? diamond : circle
 
     g.beginPath()
-    circle(g, x, y, WAYPOINT_DIAMETER)
+    drawShape(g, x, y, WAYPOINT_DIAMETER)
     g.fill()
     g.stroke()
 
-    if (isMouseOver) {
+    if (pointerOver !== PointerOverMode.None) {
         g.fillStyle = COLOR_NODE_MOUSE_OVER
         g.beginPath()
-        circle(g, x, y, WAYPOINT_DIAMETER * 2)
+        drawShape(g, x, y, WAYPOINT_DIAMETER * 2)
         g.fill()
         g.stroke()
     }
 
-    if (showForcedWarning) {
+    if (showForcedWarning !== false) {
+        const [ctx, parentOrientIsVertical] = showForcedWarning
         // forced value to something that is contrary to normal output
         g.textAlign = "center"
         g.fillStyle = circleColor
@@ -730,8 +805,12 @@ export function drawLabel(ctx: DrawContextExt, compOrient: Orientation, text: st
     }
 
     let showLabel = true
+    let labelOffset: readonly [number, number] | undefined = undefined
     if (referenceNode !== undefined) {
         showLabel = shouldDrawNodeLabel(referenceNode)
+        if (referenceNode instanceof NodeBase) {
+            labelOffset = referenceNode.labelOffset?.(compOrient)
+        }
     }
     if (!showLabel) {
         return
@@ -754,7 +833,11 @@ export function drawLabel(ctx: DrawContextExt, compOrient: Orientation, text: st
         (isNodeArray(x) ? x.group : x).posXInParentTransform
     const yy = isNumber(y) ? y :
         (isNodeArray(y) ? y.group : y).posYInParentTransform
-    const [finalX, finalY] = ctx.rotatePoint(xx, yy)
+    let [finalX, finalY] = ctx.rotatePoint(xx, yy)
+    if (labelOffset) {
+        finalX += labelOffset[0]
+        finalY += labelOffset[1]
+    }
 
     // we assume a color and a font have been set before this function is called
     const g = ctx.g
@@ -784,6 +867,7 @@ export function drawValueText(g: GraphicsRendering, value: LogicValue, x: number
     } else if (isHighImpedance(value)) {
         g.fillStyle = fillStyle ?? COLOR_LABEL_OFF
         spec = sizeStrSmall
+        y += small ? 0.5 : 0
         label = 'Z'
     } else if (value) {
         g.fillStyle = fillStyle ?? COLOR_LABEL_ON
@@ -1134,9 +1218,11 @@ function bezierBoundingBox(coords: BezierCoordsInit, margin: number): [left: num
     return [minX - margin, minY - margin, maxX + margin, maxY + margin]
 }
 
-export function isPointOnStraightWire(x: number, y: number, coords: LineCoords): boolean {
+export function isPointCloseToStraightWire(x: number, y: number, coords: LineCoords): boolean {
     const [x1, y1, x2, y2] = coords
-    const length2 = (x2 - x1) ** 2 + (y2 - y1) ** 2
+    const dx = x2 - x1
+    const dy = y2 - y1
+    const length2 = dx * dx + dy * dy
 
     // if the segment length is zero, check if the point matches the start
     if (length2 === 0) {
@@ -1144,16 +1230,67 @@ export function isPointOnStraightWire(x: number, y: number, coords: LineCoords):
     }
 
     // projection of the point onto the segment (t parameter, 0 <= t <= 1)
-    const t = ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / length2
+    const t = ((x - x1) * dx + (y - y1) * dy) / length2
     if (t < 0 || t > 1) {
         return false
     }
 
     // closest point on the segment to the given point
-    const closestX = x1 + t * (x2 - x1)
-    const closestY = y1 + t * (y2 - y1)
+    const closestX = x1 + t * dx
+    const closestY = y1 + t * dy
     const dist2 = (x - closestX) ** 2 + (y - closestY) ** 2
     return dist2 <= WIRE_WIDTH_HALF_SQUARED
+}
+
+export function fractionIfPointOnStraightSegment(x: number, y: number, coords: LineCoords): number | undefined {
+    const [x1, y1, x2, y2] = coords
+    const dx = x2 - x1
+    const dy = y2 - y1
+
+    // Cross product of (dx, dy) × (px-x1, py-y1)
+    // Zero iff the point is collinear with the segment's infinite line
+    const cross = dx * (y - y1) - dy * (x - x1)
+    if (Math.abs(cross) > 0.00001 * Math.hypot(dx, dy)) {
+        // not on the line defined by the segment
+        return undefined
+    }
+
+    // Dot product to check the point falls within [x1,y1]→[x2,y2]
+    // t ∈ [0, 1] means the point projects onto the segment
+    const dot = (x - x1) * dx + (y - y1) * dy
+    const lenSq = dx * dx + dy * dy
+
+    if (lenSq === 0) {
+        // degenerate: segment is a point
+        if (x === x1 && y === y1) {
+            return 0
+        }
+        return undefined
+    }
+
+    const t = dot / lenSq
+    if (t >= 0 && t < 1) { // exclude endpoint, handled by next wire part
+        return t
+    }
+    return undefined
+}
+
+export function isSameDirection(x: number, y: number, endX: number, endY: number, coords: LineCoords): boolean {
+    const [x1, y1, x2, y2] = coords
+    const dx1 = endX - x
+    const dy1 = endY - y
+    const dx2 = x2 - x1
+    const dy2 = y2 - y1
+
+    // colinear?
+    const cross = dx1 * dy2 - dy1 * dx2
+    if (Math.abs(cross) >= 0.00001 * Math.hypot(dx2, dy2)) {
+        return false
+    }
+
+    // same direction?
+    const dot = dx1 * dx2 + dy1 * dy2
+    return dot > 0
 }
 
 export function makeBezierCoords(coords: BezierCoordsInit): BezierCoords {
@@ -1162,11 +1299,11 @@ export function makeBezierCoords(coords: BezierCoordsInit): BezierCoords {
     const numPoints = Math.max(3, Math.ceil(endpointDist / WIRE_WIDTH * 1.25))
     const tStepSize = 1 / numPoints
     const boundingBox = bezierBoundingBox(coords, WIRE_WIDTH / 2)
-    const bezierMEta = { tStepSize, boundingBox }
-    return [...coords, bezierMEta]
+    const bezierMeta = { tStepSize, boundingBox }
+    return [...coords, bezierMeta]
 }
 
-export function isPointOnBezierWire(x: number, y: number, coords: BezierCoords): boolean {
+export function isPointCloseToBezierWire(x: number, y: number, coords: BezierCoords): boolean {
     const bezierMeta = coords[8]
 
     // fast reject outside bounding box

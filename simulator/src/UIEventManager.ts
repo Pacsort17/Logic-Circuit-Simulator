@@ -200,15 +200,7 @@ export class UIEventManager {
     public setCurrentComponentUnderPointer(comp: Drawable | null) {
         if (comp !== this._currentComponentUnderPointer) {
             this.clearTooltipIfNeeded()
-            this.clearHoverTimeoutHandle()
-
             this._currentComponentUnderPointer = comp
-            if (comp !== null) {
-                this._startHoverTimeoutHandle = setTimeout(() => {
-                    this._currentHandlers.pointerHoverOn(comp)
-                    this._startHoverTimeoutHandle = null
-                }, 1200)
-            }
             this.editor.editTools.redrawMgr.requestRedraw({ why: "pointerover changed" })
             // console.log("Over component: ", comp)
         }
@@ -218,7 +210,7 @@ export class UIEventManager {
         return this.currentSelection === undefined || this.currentSelection.previouslySelectedElements.size === 0
     }
 
-    public updateComponentUnderPointer([x, y]: [number, number], pullingWire: boolean, settingAnchor: boolean, isTouch: boolean) {
+    public updateComponentUnderPointer([x, y]: [number, number], pullingWire: boolean, settingAnchor: boolean, isTouch: boolean): Drawable | null {
 
         // Here is the pointerover search order:
         // * Components - overlays
@@ -309,6 +301,7 @@ export class UIEventManager {
 
         const comp = findComponenentUnderPointer()
         this.setCurrentComponentUnderPointer(comp)
+        return comp
     }
 
     public selectAll() {
@@ -609,7 +602,7 @@ export class UIEventManager {
                     if (!editor.deleteSelection()) {
                         // if nothing was deleted, we try to delete the hovered component
                         if (this.currentComponentUnderPointer !== null) {
-                            const result = editor.eventMgr.tryDeleteDrawable(this.currentComponentUnderPointer)
+                            const result = this.tryDeleteDrawable(this.currentComponentUnderPointer)
                             if (result.isChange) {
                                 editor.editTools.undoMgr.takeSnapshot(result)
                             }
@@ -854,7 +847,18 @@ export class UIEventManager {
         } else {
             // moving pointer or dragging without a locked component
             const linkMgr = this.editor.editorRoot.linkMgr
-            this.updateComponentUnderPointer(this.editor.offsetXY(e), linkMgr.isAddingWire, linkMgr.isSettingAnchor, e.pointerType === "touch")
+            const comp = this.updateComponentUnderPointer(this.editor.offsetXY(e), linkMgr.isAddingWire, linkMgr.isSettingAnchor, e.pointerType === "touch")
+
+            this.clearHoverTimeoutHandle()
+            if (comp !== null) {
+                this._startHoverTimeoutHandle = setTimeout(() => {
+                    this._startHoverTimeoutHandle = null
+                    if (this._currentComponentUnderPointer !== comp) {
+                        return
+                    }
+                    this._currentHandlers.pointerHoverOn(comp)
+                }, 1200)
+            }
         }
         this.editor.updateCursor(e)
     }
@@ -911,8 +915,8 @@ export class UIEventManager {
     }
 
     private isDoubleClick(clickedComp: Drawable, e: PointerEvent) {
-        if (e.pointerType === "mouse") {
-            return e.detail === 2
+        if (e.pointerType === "mouse" && e.detail === 2) {
+            return true
         } else {
             const oldLastTouchEnd = this._lastTouchEnd
             const now = new Date().getTime()
@@ -1004,9 +1008,6 @@ export class UIEventManager {
             closeButton = makeIcon("close")
             closeButton.classList.add("close-palette")
             closeButton.addEventListener("click", closeHandler)
-            closeButton.addEventListener("click", () => {
-                console.log("close palette")
-            })
             title.appendChild(closeButton)
         }
 
@@ -1059,6 +1060,10 @@ export class UIEventManager {
 
     public tryDeleteDrawable(comp: Drawable): InteractionResult {
         if (comp instanceof ComponentBase) {
+            if (comp.lockPos) {
+                window.alert(S.Messages.CannotDeleteLockedComponent)
+                return InteractionResult.NoChange
+            }
             const ref = comp.ref
             if (this.editor.editorRoot.testSuites.hasReferenceTo(ref)) {
                 if (!window.confirm(S.Tests.ComponentUsedInTestSuite.expand({ ref }))) {
@@ -1080,7 +1085,7 @@ export class UIEventManager {
         const numDeleted = this.editor.editorRoot.components.tryDeleteWhere(cond, onlyOne).length
         if (numDeleted > 0) {
             this.clearTooltipIfNeeded()
-            this.editor.editTools.redrawMgr.requestRedraw({ why: "component(s) deleted", invalidateMask: true, invalidateTests: true })
+            this.editor.editTools.redrawMgr.requestRedraw({ why: "component deletion", invalidateMask: true, invalidateTests: true })
         }
         return numDeleted
     }

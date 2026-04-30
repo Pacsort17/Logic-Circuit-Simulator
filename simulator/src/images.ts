@@ -27,6 +27,7 @@ import memlines from '../img/icons/memlines.icon.svg'; // @ts-ignore
 import mouse from '../img/icons/mouse.icon.svg'; // @ts-ignore
 import move from '../img/icons/move.icon.svg'; // @ts-ignore
 import newcomponent from '../img/icons/newcomponent.icon.svg'; // @ts-ignore
+import newwindow from '../img/icons/newwindow.icon.svg'; // @ts-ignore
 import none from '../img/icons/none.icon.svg'; // @ts-ignore
 import open from '../img/icons/open.icon.svg'; // @ts-ignore
 import outputs from '../img/icons/outputs.icon.svg'; // @ts-ignore
@@ -47,6 +48,7 @@ import settings from '../img/icons/settings.icon.svg'; // @ts-ignore
 import slanted from '../img/icons/slanted.icon.svg'; // @ts-ignore
 import step from '../img/icons/step.icon.svg'; // @ts-ignore
 import strokewidth from '../img/icons/strokewidth.icon.svg'; // @ts-ignore
+import swap from '../img/icons/swap.icon.svg'; // @ts-ignore
 import testcase from '../img/icons/testcase.icon.svg'; // @ts-ignore
 import timer from '../img/icons/timer.icon.svg'; // @ts-ignore
 import trash from '../img/icons/trash.icon.svg'; // @ts-ignore
@@ -54,12 +56,15 @@ import trash from '../img/icons/trash.icon.svg'; // @ts-ignore
 import tutorial from '../img/icons/download.icon.svg'; // @ts-ignore
 import undo from '../img/icons/undo.icon.svg'; // @ts-ignore
 import wirestyle from '../img/icons/wirestyle.icon.svg'; // @ts-ignore
+import xray from '../img/icons/xray.icon.svg'; // @ts-ignore
 
 
 // images
 import ALU from '../img/ALU.svg'; // @ts-ignore
+import Add3IfGeq5 from '../img/Add3IfGeq5.svg'; // @ts-ignore
 import Adder from '../img/Adder.svg'; // @ts-ignore
 import AdderArray from '../img/AdderArray.svg'; // @ts-ignore
+import Bypass from '../img/Bypass.svg'; // @ts-ignore
 import Clock from '../img/Clock.svg'; // @ts-ignore
 import Comparator from '../img/Comparator.svg'; // @ts-ignore
 import ControlledInverter from '../img/ControlledInverter.svg'; // @ts-ignore
@@ -80,10 +85,12 @@ import FlipflopJK from '../img/FlipflopJK.svg'; // @ts-ignore
 import FlipflopT from '../img/FlipflopT.svg'; // @ts-ignore
 import GateArray from '../img/GateArray.svg'; // @ts-ignore
 import HalfAdder from '../img/HalfAdder.svg'; // @ts-ignore
+import IncDec from '../img/IncDec.svg'; // @ts-ignore
 import Input1 from '../img/Input1.svg'; // @ts-ignore
 import Input4 from '../img/Input4.svg'; // @ts-ignore
 import Input8 from '../img/Input8.svg'; // @ts-ignore
 import Label from '../img/Label.svg'; // @ts-ignore
+import LatchD from '../img/LatchD.svg'; // @ts-ignore
 import LatchSR from '../img/LatchSR.svg'; // @ts-ignore
 import Mux from '../img/Mux.svg'; // @ts-ignore
 import Output1 from '../img/Output1.svg'; // @ts-ignore
@@ -124,11 +131,10 @@ import xnor4 from '../img/xnor4.svg'; // @ts-ignore
 import xor from '../img/xor.svg'; // @ts-ignore
 import xor3 from '../img/xor3.svg'; // @ts-ignore
 import xor4 from '../img/xor4.svg'; // @ts-ignore
-import { Modifier, applyModifierTo, raw } from './htmlgen'
-
 
 void 0 // dummy line to consume the last 'ts-ignore'
 
+import { Modifier, applyModifierTo, raw } from './htmlgen'
 
 const icons = {
     add,
@@ -152,6 +158,7 @@ const icons = {
     mouse,
     move,
     newcomponent,
+    newwindow,
     none,
     open,
     outputs,
@@ -173,18 +180,22 @@ const icons = {
     slanted,
     step,
     strokewidth,
+    swap,
     testcase,
     timer,
     trash,
     tutorial,
     undo,
     wirestyle,
+    xray,
 }
 
 const images = {
+    Add3IfGeq5,
     Adder,
     AdderArray,
     ALU,
+    Bypass,
     and,
     and3,
     and4,
@@ -202,6 +213,7 @@ const images = {
     FlipflopT,
     GateArray,
     HalfAdder,
+    IncDec,
     imply,
     Input1,
     Input4,
@@ -210,6 +222,7 @@ const images = {
     Rectangle,
     Label,
     LatchSR,
+    LatchD,
     Mux,
     nand,
     nand3,
@@ -289,6 +302,10 @@ function inlineSvgFor<TImages extends Record<string, string>>(svgData: TImages, 
 
 export function inlineIconSvgFor(name: IconName): string {
     return inlineSvgFor(icons, name)
+}
+
+export function inlineImageSvgFor(name: ImageName): string {
+    return inlineSvgFor(images, name)
 }
 
 

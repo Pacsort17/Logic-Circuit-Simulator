@@ -3,8 +3,10 @@ import JSON5 from "json5"
 import { ButtonDataset } from "./ComponentFactory"
 import { LogicEditor } from "./LogicEditor"
 import { ALUDef } from "./components/ALU"
+import { Add3IfGeq5Def } from "./components/Add3IfGeq5"
 import { AdderDef } from "./components/Adder"
 import { AdderArrayDef } from "./components/AdderArray"
+import { BypassDef } from "./components/Bypass"
 import { ClockDef } from "./components/Clock"
 import { ComparatorDef } from "./components/Comparator"
 import { ParamDef, ParametrizedComponentDef, ParamsFromDefs } from "./components/Component"
@@ -27,9 +29,11 @@ import { FlipflopTDef } from "./components/FlipflopT"
 import { Gate1Def, GateNDef, GateTypePrefix } from "./components/Gate"
 import { GateArrayDef } from "./components/GateArray"
 import { HalfAdderDef } from "./components/HalfAdder"
+import { IncDecDef } from "./components/IncDec"
 import { InputDef } from "./components/Input"
 import { LabelDef } from "./components/Label"
-import { LatchSRDef } from "./components/LatchSR"
+import { LatchDDef } from "./components/LatchD"
+import { LatchSRDef, LatchSRWithEnableDef } from "./components/LatchSR"
 import { MuxDef } from "./components/Mux"
 import { OutputDef } from "./components/Output"
 import { PassthroughDef } from "./components/Passthrough"
@@ -44,8 +48,8 @@ import { ShiftRegisterDef } from "./components/ShiftRegister"
 import { TristateBufferDef } from "./components/TristateBuffer"
 import { TristateBufferArrayDef } from "./components/TristateBufferArray"
 import { a, button, cls, div, emptyMod, raw, span, style, title, type } from "./htmlgen"
-import { ImageName, makeImage, makeSvgHolder } from "./images"
-import { S, Strings } from "./strings"
+import { ImageName, inlineImageSvgFor, makeImage, makeSvgHolder } from "./images"
+import { Lang, S, Strings, TranslationStrings } from "./strings"
 import { deepObjectEquals, isArray, isString, setVisible } from "./utils"
 
 export type ComponentKey = Strings["ComponentBar"]["Components"]["type"]
@@ -59,6 +63,7 @@ export type DefAndParams<
 }
 
 export type LibraryItemVisibility = "always" | "withButton" | "ifShowOnly"
+const always = "always"
 const withButton = "withButton"
 const ifShowOnly = "ifShowOnly"
 
@@ -137,10 +142,9 @@ const componentsMenu: Array<Section> = [{
         GateNDef.button({ type: "nor", bits: 4 }, "nor4", { compat: "nor4", visible: ifShowOnly }),
         GateNDef.button({ type: "xnor", bits: 4 }, "xnor4", { compat: "xnor4", visible: ifShowOnly }),
 
+        GateArrayDef.button({ type: "and", bits: 4 }, "GateArray", { compat: "quad-gate" }),
         ControlledInverterDef.button({ bits: 4, bottom: false }, "ControlledInverter", { compat: "switched-inverter", visible: withButton }),
-        GateArrayDef.button({ type: "and", bits: 4 }, "GateArray", { compat: "quad-gate", visible: withButton }),
         TristateBufferArrayDef.button({ bits: 4, bottom: false }, "TristateBufferArray", { visible: withButton }),
-
     ],
 }, {
     nameKey: "Layout",
@@ -152,20 +156,36 @@ const componentsMenu: Array<Section> = [{
         PassthroughDef.button({ bits: 4 }, "PassthroughN"),
     ],
 }, {
-    nameKey: "Components",
+    nameKey: "Arithmetic",
     items: [
         HalfAdderDef.button("HalfAdder"),
         AdderDef.button("Adder"),
         ComparatorDef.button("Comparator", { compat: "comparator", visible: withButton }),
 
+        IncDecDef.button({ bits: 4 }, "IncDec", { visible: withButton }),
         AdderArrayDef.button({ bits: 4 }, "AdderArray"),
+        Add3IfGeq5Def.button("Add3IfGeq5", { visible: ifShowOnly }),
         ALUDef.button({ bits: 4, ext: false }, "ALU"),
-
+    ],
+}, {
+    nameKey: "Combinational",
+    items: [
         MuxDef.button({ from: 4, to: 2, bottom: false }, "Mux"),
         MuxDef.button({ from: 8, to: 4, bottom: false }, "Mux", { visible: ifShowOnly }),
         DemuxDef.button({ from: 2, to: 4, bottom: false }, "Demux"),
+        BypassDef.button({ bits: 4, bottom: false }, "Bypass", { visible: withButton }),
 
+        DecoderDef.button({ bits: 2 }, "Decoder", { compat: "decoder" }),
+        DecoderBCDDef.button({ bits: 4 }, "DecoderBCD", { compat: "decoder-bcd4", visible: withButton }),
+        Decoder7SegDef.button("Decoder7Seg", { compat: "decoder-7seg" }),
+        Decoder16SegDef.button("Decoder16Seg", { compat: "decoder-16seg", visible: withButton }),
+    ],
+}, {
+    nameKey: "Memory",
+    items: [
         LatchSRDef.button("LatchSR"),
+        LatchSRWithEnableDef.button(["LatchSRGated", "LatchSR"], { visible: ifShowOnly }),
+        LatchDDef.button("LatchD", { visible: withButton }),
         FlipflopJKDef.button("FlipflopJK", { compat: "flipflop-jk", visible: withButton }),
         FlipflopTDef.button("FlipflopT", { compat: "flipflop-t", visible: withButton }),
         FlipflopDDef.button("FlipflopD", { compat: "flipflop-d" }),
@@ -176,12 +196,6 @@ const componentsMenu: Array<Section> = [{
 
         RAMDef.button({ lines: 16, bits: 4 }, "RAM"),
         ROMDef.button({ lines: 16, bits: 4 }, "ROM", { visible: withButton }),
-
-        DecoderDef.button({ bits: 2 }, "Decoder", { compat: "decoder" }),
-        Decoder7SegDef.button("Decoder7Seg", { compat: "decoder-7seg" }),
-        Decoder16SegDef.button("Decoder16Seg", { compat: "decoder-16seg", visible: withButton }),
-        DecoderBCDDef.button({bits: 4}, "DecoderBCD", { compat: "decoder-bcd4", visible: withButton }),
-
     ],
 }]
 
@@ -196,20 +210,23 @@ type HtmlSection = {
 
 export class ComponentMenu {
 
-    private readonly _htmlSections: HtmlSection[]
+    private readonly _htmlSections: HtmlSection[] = []
     private _customComponentSection?: HtmlSection
     private _restrictedToGateTypes: Set<string> | undefined
 
     public constructor(
         public readonly editor: LogicEditor,
-        public readonly parent: HTMLElement,
+        public readonly containerElem: HTMLElement,
     ) {
-        const showOnly = editor.options.showOnly
-        this._htmlSections = []
+        this.rebuildMenu(editor.options.showOnly)
+    }
+
+    public rebuildMenu(showOnly: readonly string[] | undefined) {
         this._restrictedToGateTypes = showOnly === undefined ? undefined : new Set()
         const showOnlyBuf = showOnly === undefined ? undefined : [...showOnly]
         let lastSectionNonEmpty = false
 
+        this.containerElem.innerHTML = ""
         for (const section of componentsMenu) {
             const { allButtons, buttonsShowWithMore, buttonsShowWithURLParam, accessibleGateTypes } =
                 makeButtons(section, showOnlyBuf)
@@ -226,6 +243,26 @@ export class ComponentMenu {
         if (showOnlyBuf !== undefined && showOnlyBuf.filter(s => !s.endsWith("*")).length > 0) {
             console.log(`ERROR Supposed to show unknown elems: ${showOnlyBuf.join("; ")}`)
         }
+
+        const groupButton = this.containerElem.querySelector("button.sim-component-button[data-type=rect]")
+        if (groupButton === null) {
+            if (showOnly === undefined) {
+                // else, it was probably hidden on purpose
+                console.log("ERROR: Could not find group button")
+            }
+        } else {
+            groupButton.addEventListener("pointerdown", this.editor.wrapHandler(e => {
+                const success = this.editor.makeGroupWithSelection()
+                if (success) {
+                    e.preventDefault()
+                    e.stopImmediatePropagation()
+                }
+            }))
+        }
+
+        this.editor.eventMgr.registerButtonListenersOn(this.allFixedButtons(), false)
+
+        this.updateCustomComponentButtons(this.editor.factory.customDefs())
     }
 
     public allFixedButtons() {
@@ -258,6 +295,8 @@ export class ComponentMenu {
             }
         }
         this._customComponentSection = defs === undefined ? undefined : this.makeCustomComponentSection(defs)
+
+        this.editor.eventMgr.registerButtonListenersOn(this.allCustomButtons(), true)
     }
 
     public setCustomComponentsHidden(ids: readonly string[]) {
@@ -321,7 +360,7 @@ export class ComponentMenu {
                 div(style("height: 20px"),
                     raw("&nbsp;")
                 ).render()
-            this.parent.appendChild(separator)
+            this.containerElem.appendChild(separator)
         }
 
         // section header
@@ -329,10 +368,10 @@ export class ComponentMenu {
             div(cls("leftToolbarHeader"),
                 S.ComponentBar.SectionNames[nameKey]
             ).render()
-        this.parent.appendChild(header)
+        this.containerElem.appendChild(header)
 
         for (const compButton of allButtons) {
-            this.parent.appendChild(compButton)
+            this.containerElem.appendChild(compButton)
         }
 
         // link to show more if needed
@@ -360,7 +399,7 @@ export class ComponentMenu {
                 }
                 showMoreLink!.innerHTML = names[Number(moreShown)]
             })
-            this.parent.appendChild(showMoreLink)
+            this.containerElem.appendChild(showMoreLink)
         }
 
         return { separator, header, buttons: allButtons, showMoreLink }
@@ -428,6 +467,16 @@ function makeButton(typeStr: string, normallyHidden: boolean, componentIds: stri
 
 
 function shouldShow(componentIds: string[], showOnly: string[]) {
+    function matchesSpec(showOnlySpec: string, componentId: string) {
+        if (showOnlySpec === componentId) {
+            return [true, false]
+        }
+        if (showOnlySpec.endsWith("*") && componentId.startsWith(showOnlySpec.slice(0, -1))) {
+            return [true, true]
+        }
+        return [false, false]
+    }
+
     let visible = false
     for (const componentId of componentIds) {
         for (const showOnlySpec of showOnly) {
@@ -444,18 +493,7 @@ function shouldShow(componentIds: string[], showOnly: string[]) {
     }
 
     // console.log(`buttonId '${buttonId}' is visible: ${visible}`)
-
     return visible
-
-    function matchesSpec(showOnlySpec: string, componentId: string) {
-        if (showOnlySpec === componentId) {
-            return [true, false]
-        }
-        if (showOnlySpec.endsWith("*") && componentId.startsWith(showOnlySpec.slice(0, -1))) {
-            return [true, true]
-        }
-        return [false, false]
-    }
 }
 
 
@@ -496,4 +534,26 @@ function componentIdsFor(item: LibraryItem): string[] {
     }
 
     return ids
+}
+
+
+export function getAllComponentTypes(lang: Lang) {
+    const S = TranslationStrings[lang]
+    const sections = []
+    for (const section of componentsMenu) {
+        const id = section.nameKey
+        const name = S.ComponentBar.SectionNames[id]
+        const components = []
+        for (const item of section.items) {
+            const [stringsKey, iconKey] = isString(item.visual) ? [item.visual, item.visual] : item.visual
+            const compStrings = S.ComponentBar.Components.props[stringsKey]
+            const id = componentIdsFor(item)[0]
+            const name = isString(compStrings) ? compStrings : compStrings[0]
+            const initiallyFolded = item.visible !== undefined && item.visible !== always
+            const icon = inlineImageSvgFor(iconKey)
+            components.push({ id, name, initiallyFolded, icon })
+        }
+        sections.push({ id, name, components })
+    }
+    return sections
 }

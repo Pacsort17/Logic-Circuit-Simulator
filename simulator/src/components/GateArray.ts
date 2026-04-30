@@ -3,7 +3,7 @@ import { circle, COLOR_COMPONENT_BORDER, COLOR_UNKNOWN, fillTextVAlign, GRID_STE
 import { div, mods, tooltipContent } from "../htmlgen"
 import { S } from "../strings"
 import { ArrayFillUsing, ArrayFillWith, LogicValue, Mode, typeOrUndefined } from "../utils"
-import { AdderArrayDef } from "./AdderArray"
+import { AdderArrayDef, getXRayScaleForArrayComponent, xrayWireAndLayoutAsArray } from "./AdderArray"
 import { defineParametrizedComponent, groupVertical, param, ParametrizedComponentBase, Repr, ResolvedParams } from "./Component"
 import { DrawableParent, DrawContext, GraphicsRendering, MenuData, MenuItems } from "./Drawable"
 import { GateTypePrefix, validateGateType } from "./Gate"
@@ -34,15 +34,16 @@ export const GateArrayDef =
             return { type, numBits: bits }
         },
         size: AdderArrayDef.size,
-        makeNodes: ({ numBits }) => {
+        makeNodes: ({ numBits, isXRay }) => {
             const inputCenterY = 5 + Math.max(0, (numBits - 8) / 2)
+            const outX = isXRay ? 2.5 : 3
             return {
                 ins: {
-                    A: groupVertical("w", -3, -inputCenterY, numBits),
-                    B: groupVertical("w", -3, inputCenterY, numBits),
+                    A: groupVertical("w", -outX, -inputCenterY, numBits),
+                    B: groupVertical("w", -outX, inputCenterY, numBits),
                 },
                 outs: {
-                    S: groupVertical("e", 3, 0, numBits),
+                    S: groupVertical("e", outX, 0, numBits),
                 },
             }
         },
@@ -230,8 +231,30 @@ export class GateArray extends ParametrizedComponentBase<GateArrayRepr> {
         })
     }
 
-    private doSetType(newSubtype: GateNType) {
+    protected override xrayScale() {
+        return getXRayScaleForArrayComponent(this.numBits)
+    }
+
+    protected override makeXRay(level: number, scale: number, link: boolean) {
+        const bits = this.numBits
+
+        const { xray, gate } = this.parent.editor.newXRay(this, level, scale)
+        const { ins, outs, p } = this.makeXRayNodes(xray, link)
+
+        xrayWireAndLayoutAsArray(
+            xray, bits, ins, outs, p,
+            (i, x, y) => gate(`gate${i}`, this.type, x, y),
+            gate => gate.inputs.In[0],
+            gate => gate.inputs.In[1],
+            gate => gate.outputs.Out,
+        )
+
+        return xray
+    }
+
+    public doSetType(newSubtype: GateNType) {
         this._type = newSubtype
+        this.invalidateXRay()
         this.setNeedsRecalc()
         this.requestRedraw({ why: "quad gate type changed", invalidateTests: true })
     }

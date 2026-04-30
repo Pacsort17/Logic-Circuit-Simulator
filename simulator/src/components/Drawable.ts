@@ -9,19 +9,18 @@ import { TestSuites } from "../TestSuite"
 import { TestsPalette } from "../TestsPalette"
 import { PointerDragEvent } from "../UIEventManager"
 import { UndoManager } from "../UndoManager"
-import { COLOR_COMPONENT_BORDER, COLOR_MOUSE_OVER, COLOR_MOUSE_OVER_DANGER, ColorString, DrawZIndex, GRID_STEP, inRect } from "../drawutils"
+import { COLOR_COMPONENT_BORDER, COLOR_MOUSE_OVER, COLOR_MOUSE_OVER_DANGER, COLOR_MOUSE_OVER_RELATED, COLOR_MOUSE_OVER_SAME_ORIGIN, ColorString, DrawZIndex, GRID_STEP, inRect } from "../drawutils"
 import { fixedWidthInContextMenu, Modifier, ModifierObject, span } from "../htmlgen"
 import { IconName } from "../images"
 import { S } from "../strings"
-import { Expand, FixedArray, InteractionResult, Mode, PromiseOrValue, RichStringEnum, typeOrUndefined } from "../utils"
-import { Component, ComponentBase } from "./Component"
+import { Expand, FixedArray, InteractionResult, Mode, Orientation, Orientations, Orientations_, ParentType, PromiseOrValue, typeOrUndefined } from "../utils"
+import { Component, ComponentBase, InjectedParams } from "./Component"
 import { type LinkManager } from "./Wire"
 
 export type GraphicsRendering =
     | CanvasRenderingContext2D & {
         fill(): void,
-        beginGroup(className?: string): void
-        endGroup(): void,
+        group<T>(className: string, f: () => T): T
         createPath(path?: Path2D | string): Path2D
     }
     | SVGRenderingContext
@@ -29,7 +28,8 @@ export type GraphicsRendering =
 export interface DrawContext {
     g: GraphicsRendering
     drawParams: DrawParams
-    isMouseOver: boolean
+    pointerOver: PointerOverMode
+    isPointerOver: boolean
     borderColor: ColorString
     inNonTransformedFrame(f: (ctx: DrawContextExt) => unknown): void
 }
@@ -78,6 +78,13 @@ export const MenuData = {
 export type MenuItemPlacement = "start" | "mid" | "end" // where to insert items created by components
 export type MenuItems = Array<[MenuItemPlacement, MenuItem]>
 
+export enum PointerOverMode {
+    None,
+    PointerOver,
+    WireSameOrigin,
+    RelatedComponent,
+}
+
 class _DrawContextImpl implements DrawContext, DrawContextExt {
 
     private readonly entranceTransform: DOMMatrix
@@ -88,13 +95,17 @@ class _DrawContextImpl implements DrawContext, DrawContextExt {
         comp: Drawable,
         public readonly g: GraphicsRendering,
         public readonly drawParams: DrawParams,
-        public readonly isMouseOver: boolean,
+        public readonly pointerOver: PointerOverMode,
         public readonly borderColor: ColorString,
     ) {
         this.entranceTransform = g.getTransform()
         this.entranceTransformInv = this.entranceTransform.inverse()
         comp.applyDrawTransform(g)
         this.componentTransform = g.getTransform()
+    }
+
+    public get isPointerOver() {
+        return this.pointerOver === PointerOverMode.PointerOver
     }
 
     public exit() {
@@ -122,6 +133,7 @@ function mult(m: DOMMatrix, x: number, y: number): [x: number, y: number] {
 
 export interface DrawableParent {
 
+    get type(): ParentType
     isMainEditor(): this is LogicEditor
     readonly editor: LogicEditor
     // nice to forward...
@@ -139,6 +151,9 @@ export interface DrawableParent {
 
     stopEditingThis(): void
     startEditingThis(tools: EditTools): void
+
+    // passed to components created in this parent
+    readonly componentCreationParams: InjectedParams
 }
 
 export type EditTools = {
@@ -183,19 +198,38 @@ export abstract class Drawable {
 
     public draw(g: GraphicsRendering, drawParams: DrawParams): void {
         const inSelectionRect = drawParams.currentSelection?.isSelected(this) ?? false
-        const isPointerOver = this === drawParams.currentCompUnderPointer || inSelectionRect
-        const borderColor = !isPointerOver
-            ? COLOR_COMPONENT_BORDER
-            : drawParams.anythingMoving && this.lockPos
-                ? COLOR_MOUSE_OVER_DANGER
-                : COLOR_MOUSE_OVER
+        const compUnderPointer = drawParams.currentCompUnderPointer
+        const pointerOverMode =
+            this === compUnderPointer || inSelectionRect ? PointerOverMode.PointerOver
+                : compUnderPointer !== null ? this.shouldBeHighlightedWith(compUnderPointer)
+                    : PointerOverMode.None
 
-        const ctx = new _DrawContextImpl(this, g, drawParams, isPointerOver, borderColor)
+        const borderColor = (() => {
+            switch (pointerOverMode) {
+                case PointerOverMode.PointerOver:
+                    if (drawParams.anythingMoving && this.lockPos) {
+                        return COLOR_MOUSE_OVER_DANGER
+                    }
+                    return COLOR_MOUSE_OVER
+                case PointerOverMode.WireSameOrigin:
+                    return COLOR_MOUSE_OVER_SAME_ORIGIN
+                case PointerOverMode.RelatedComponent:
+                    return COLOR_MOUSE_OVER_RELATED
+                case PointerOverMode.None:
+                    return COLOR_COMPONENT_BORDER
+            }
+        })()
+
+        const ctx = new _DrawContextImpl(this, g, drawParams, pointerOverMode, borderColor)
         try {
             this.doDraw(g, ctx)
         } finally {
             ctx.exit()
         }
+    }
+
+    protected shouldBeHighlightedWith(__compUnderPointer: Drawable): PointerOverMode {
+        return PointerOverMode.None
     }
 
     public applyDrawTransform(__g: GraphicsRendering) {
@@ -331,58 +365,6 @@ export interface HasPosition {
     readonly posX: number
     readonly posY: number
 
-}
-
-export const Orientations_ = {
-    "e": {},
-    "s": {},
-    "w": {},
-    "n": {},
-} as const
-
-export const Orientations = RichStringEnum.withProps<{
-}>()(Orientations_)
-
-
-export type Orientation = typeof Orientations.type
-
-export const Orientation = {
-    default: "e" as Orientation,
-    invert(o: Orientation): Orientation {
-        switch (o) {
-            case "e": return "w"
-            case "w": return "e"
-            case "n": return "s"
-            case "s": return "n"
-        }
-    },
-    nextClockwise(o: Orientation): Orientation {
-        switch (o) {
-            case "e": return "s"
-            case "s": return "w"
-            case "w": return "n"
-            case "n": return "e"
-        }
-    },
-    nextCounterClockwise(o: Orientation): Orientation {
-        switch (o) {
-            case "e": return "n"
-            case "n": return "w"
-            case "w": return "s"
-            case "s": return "e"
-        }
-    },
-    isVertical(o: Orientation): o is "s" | "n" {
-        return o === "s" || o === "n"
-    },
-    add(compOrient: Orientation, nodeOrient: Orientation): Orientation {
-        switch (compOrient) {
-            case "e": return nodeOrient
-            case "w": return Orientation.invert(nodeOrient)
-            case "s": return Orientation.nextClockwise(nodeOrient)
-            case "n": return Orientation.nextCounterClockwise(nodeOrient)
-        }
-    },
 }
 
 
@@ -522,7 +504,7 @@ export abstract class DrawableWithPosition extends Drawable implements HasPositi
     protected trySetPosition(posX: number, posY: number, snapToGrid: boolean): undefined | [number, number] {
         const newPos = this.tryMakePosition(posX, posY, snapToGrid)
         if (newPos === undefined) {
-            return
+            return undefined
         }
         this.doSetPosition(newPos[0], newPos[1])
         return newPos

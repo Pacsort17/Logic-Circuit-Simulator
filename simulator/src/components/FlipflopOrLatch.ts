@@ -2,8 +2,10 @@ import * as t from "io-ts"
 import { COLOR_BACKGROUND_INVALID, COLOR_COMPONENT_BORDER, colorForLogicValue, drawValueText } from "../drawutils"
 import { S } from "../strings"
 import { EdgeTrigger, LogicValue, LogicValueRepr, Unknown, toLogicValue, toLogicValueRepr, typeOrUndefined } from "../utils"
-import { ComponentBase, InstantiatedComponentDef, NodesIn, NodesOut, Repr, defineAbstractComponent } from "./Component"
+import { ComponentBase, InstantiatedComponentDef, NodeInDesc, NodeRec, NodesIn, NodesOut, Repr, defineAbstractComponent } from "./Component"
 import { DrawContext, DrawableParent, GraphicsRendering, MenuData, MenuItems } from "./Drawable"
+import { GateN } from "./Gate"
+import { XRay } from "./XRay"
 
 
 export const FlipflopOrLatchDef =
@@ -17,13 +19,13 @@ export const FlipflopOrLatchDef =
             state: false,
             showContent: true,
         },
-        size: { gridWidth: 5, gridHeight: 7 },
-        makeNodes: () => {
+        size: () => ({ gridWidth: 5, gridHeight: 7 }),
+        makeNodes: (nodeDistX: number) => {
             const s = S.Components.Generic
             return {
                 outs: {
-                    Q: [+4, -2, "e", s.OutputQDesc],
-                    Q̅: [+4, 2, "e", s.OutputQBarDesc],
+                    Q: [nodeDistX, -2, "e", s.OutputQDesc],
+                    Q̅: [nodeDistX, 2, "e", s.OutputQBarDesc],
                 },
             }
         },
@@ -35,6 +37,14 @@ export const FlipflopOrLatchDef =
             return [state, LogicValue.invert(state)]
         },
     })
+
+export const FlipflopOrLatchDefNodeDistX = (isXRay: boolean) => isXRay ? 3 : 4
+
+export const FlipflopOrLatchDefPreClr = {
+    Pre: [0, -4, "n", S.Components.Generic.InputPresetDesc, { prefersSpike: true }],
+    Clr: [0, +4, "s", S.Components.Generic.InputClearDesc, { prefersSpike: true }],
+} as const satisfies NodeRec<NodeInDesc>
+
 
 export type FlipflopOrLatchRepr = Repr<typeof FlipflopOrLatchDef>
 export type FlipflopOrLatchValue = [LogicValue, LogicValue]
@@ -64,6 +74,18 @@ export abstract class FlipflopOrLatch<TRepr extends FlipflopOrLatchRepr> extends
         }
     }
 
+    public get storedValue() {
+        return this.value[0]
+    }
+
+    public set storedValue(val: LogicValue) {
+        this.doSetValue([val, LogicValue.invert(val)])
+        const xray = this.cachedXRay
+        if (xray !== undefined) {
+            this.setStoredValueInXRay(xray, val)
+        }
+    }
+
     protected override propagateValue(newValue: [LogicValue, LogicValue]) {
         this.outputs.Q.value = newValue[0]
         this.outputs.Q̅.value = newValue[1]
@@ -85,7 +107,6 @@ export abstract class FlipflopOrLatch<TRepr extends FlipflopOrLatchRepr> extends
         })
     }
 
-
     public static drawStoredValueFrame(g: GraphicsRendering, x: number, y: number, width: number, height: number, swapHeightWidth: boolean) {
         if (swapHeightWidth) {
             [width, height] = [height, width]
@@ -104,6 +125,38 @@ export abstract class FlipflopOrLatch<TRepr extends FlipflopOrLatchRepr> extends
         drawValueText(g, value, x, y, { small: cellHeight < 18 })
     }
 
+    protected makeSetShowContentContextMenuItem(): MenuItems {
+        const icon = this._showContent ? "check" : "none"
+        return [
+            ["mid", MenuData.item(icon, S.Components.Generic.contextMenu.ShowContent,
+                () => this.doSetShowContent(!this._showContent))],
+        ]
+    }
+
+    protected override makeXRay(level: number, scale: number, link: boolean) {
+        const xray = this.makeXRayForFlipflopOrLatch(level, scale, link)
+        this.setStoredValueInXRay(xray, this.storedValue)
+        return xray
+    }
+
+    protected abstract makeXRayForFlipflopOrLatch(level: number, scale: number, link: boolean): XRay
+
+    protected abstract setStoredValueInXRay(xray: XRay, val: LogicValue): void
+
+}
+
+
+export const LatchNorQBar = "norQBar"
+export const LatchNorQ = "norQ"
+export function setStoredValueInXRayForNorLatch(xray: XRay, val: LogicValue) {
+    const norQbar = xray.components.get(LatchNorQBar)
+    const norQ = xray.components.get(LatchNorQ)
+    if (norQbar === undefined || norQ === undefined) {
+        console.warn("Cannot set stored value for latch in XRay: missing nor gates")
+        return
+    }
+    const nodeToStabilize = ((val === true ? norQ : norQbar) as GateN).outputs.Out
+    nodeToStabilize.value = true as LogicValue
 }
 
 
@@ -121,14 +174,13 @@ export const FlipflopBaseDef =
             trigger: EdgeTrigger.rising,
         },
         size: FlipflopOrLatchDef.size,
-        makeNodes: (clockYOffset: number) => {
-            const base = FlipflopOrLatchDef.makeNodes()
+        makeNodes: (clockYOffset: number, nodeDistX: number) => {
+            const base = FlipflopOrLatchDef.makeNodes(nodeDistX)
             const s = S.Components.Generic
             return {
                 ins: {
-                    Clock: [-4, clockYOffset, "w", s.InputClockDesc, { isClock: true }],
-                    Pre: [0, -4, "n", s.InputPresetDesc, { prefersSpike: true }],
-                    Clr: [0, +4, "s", s.InputClearDesc, { prefersSpike: true }],
+                    Clock: [-nodeDistX, clockYOffset, "w", s.InputClockDesc, { isClock: true }],
+                    ...FlipflopOrLatchDefPreClr,
                 },
                 outs: base.outs,
             }
@@ -223,23 +275,24 @@ export abstract class Flipflop<
 
     protected abstract doRecalcValueAfterClock(): LogicValue
 
-    protected doSetTrigger(trigger: EdgeTrigger) {
+    public doSetTrigger(trigger: EdgeTrigger) {
         this._trigger = trigger
         this.requestRedraw({ why: "trigger changed", invalidateTests: true })
+        this.invalidateXRay()
     }
 
     protected override makeComponentSpecificContextMenuItems(): MenuItems {
-
-        const icon = this._showContent ? "check" : "none"
-        const toggleShowContentItem = MenuData.item(icon, S.Components.Generic.contextMenu.ShowContent,
-            () => this.doSetShowContent(!this._showContent))
-
         return [
             ...makeTriggerItems(this._trigger, this.doSetTrigger.bind(this)),
             ["mid", MenuData.sep()],
-            ["mid", toggleShowContentItem],
+            ...this.makeSetShowContentContextMenuItem(),
+            ...this.makeFlipFlopSpecificContextMenuItems(),
             ...this.makeForceOutputsContextMenuItem(true),
         ]
+    }
+
+    protected makeFlipFlopSpecificContextMenuItems(): MenuItems {
+        return []
     }
 
 }

@@ -1,12 +1,12 @@
 import * as t from "io-ts"
-import { COLOR_COMPONENT_BORDER, DrawZIndex, FONT_LABEL_DEFAULT, GRID_STEP, TextVAlign, fillTextVAlign } from "../drawutils"
+import { COLOR_COMPONENT_BORDER, COMPONENT_OUTLINE_THICKNESS, DrawZIndex, FONT_LABEL_DEFAULT, GRID_STEP, TextVAlign, fillTextVAlign } from "../drawutils"
 import { S } from "../strings"
 import { InteractionResult, typeOrUndefined } from "../utils"
 import { ComponentBase, Repr, defineComponent } from "./Component"
 import { DrawContext, DrawableParent, GraphicsRendering, MenuData, MenuItems } from "./Drawable"
 
 export const LabelDef =
-    defineComponent("label", {
+    defineComponent("label", true, true, {
         idPrefix: "label",
         button: { imgWidth: 32 },
         repr: {
@@ -19,7 +19,7 @@ export const LabelDef =
             // align: "center" as const,
             font: FONT_LABEL_DEFAULT,
         },
-        size: { gridWidth: 4, gridHeight: 2 }, // overridden
+        size: () => ({ gridWidth: 4, gridHeight: 2 }), // overridden
         makeNodes: () => ({}),
     })
 
@@ -33,7 +33,7 @@ export class Label extends ComponentBase<LabelRepr> {
     private _cachedTextMetrics: TextMetrics | undefined = undefined
 
     public constructor(parent: DrawableParent, saved?: LabelRepr) {
-        super(parent, LabelDef, saved)
+        super(parent, LabelDef.from(parent), saved)
         this._text = saved?.text ?? LabelDef.aults.text
         // this._align = (saved?.align as CanvasTextAlign) ?? LabelStringDefaults.align
         this._font = saved?.font ?? LabelDef.aults.font
@@ -74,9 +74,9 @@ export class Label extends ComponentBase<LabelRepr> {
 
     protected override doDraw(g: GraphicsRendering, ctx: DrawContext) {
         g.font = this._font
-        g.lineWidth = 3
+        g.lineWidth = COMPONENT_OUTLINE_THICKNESS
 
-        if (ctx.isMouseOver) {
+        if (ctx.isPointerOver) {
             if (this._cachedTextMetrics === undefined) {
                 this._cachedTextMetrics = g.measureText(this._text)
             }

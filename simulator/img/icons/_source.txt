@@ -1,4 +1,4 @@
-All icons from: https://fonts.google.com/icons?icon.style=Rounded
+Many icons from: https://fonts.google.com/icons?icon.style=Rounded
 
 Fill: 1 (rightmost)
 Weight: 400 (middle value)
@@ -8,6 +8,8 @@ Optical size: 20px (leftmost)
 Downloaded as svg and run through svgo with the sibling config:
 
 $ svgo --config=_svgo.config.js *.icon.svg
+
+Then remove the fill color.
 
 (Also see comments in config.)
 

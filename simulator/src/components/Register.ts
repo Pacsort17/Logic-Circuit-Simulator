@@ -2,11 +2,14 @@ import * as t from "io-ts"
 import { COLOR_COMPONENT_BORDER, GRID_STEP, TextVAlign, displayValuesFromArray, fillTextVAlign, useCompact } from "../drawutils"
 import { div, mods, tooltipContent } from "../htmlgen"
 import { S } from "../strings"
-import { ArrayFillWith, EdgeTrigger, LogicValue, Unknown, allBooleans, binaryStringRepr, hexStringRepr, isAllZeros, isHighImpedance, isUnknown, typeOrUndefined, valuesFromBinaryOrHexRepr } from "../utils"
+import { ArrayFillUsing, ArrayFillWith, EdgeTrigger, LogicValue, Orientation, Unknown, allBooleans, binaryStringRepr, hexStringRepr, isAllZeros, isHighImpedance, isUnknown, typeOrUndefined, valuesFromBinaryOrHexRepr } from "../utils"
 import { ExtractParamDefs, ExtractParams, NodesIn, NodesOut, ParametrizedComponentBase, ReadonlyGroupedNodeArray, Repr, ResolvedParams, defineAbstractParametrizedComponent, defineParametrizedComponent, groupVertical, param, paramBool } from "./Component"
 import { Counter } from "./Counter"
-import { DrawContext, DrawContextExt, DrawableParent, GraphicsRendering, MenuData, MenuItems, Orientation } from "./Drawable"
+import { DrawContext, DrawContextExt, DrawableParent, GraphicsRendering, MenuData, MenuItems } from "./Drawable"
+import { FlipflopDDef } from "./FlipflopD"
 import { Flipflop, FlipflopOrLatch, makeTriggerItems } from "./FlipflopOrLatch"
+import { IncDecDef } from "./IncDec"
+import { MuxDef } from "./Mux"
 import { NodeOut } from "./Node"
 import { type ShiftRegisterDef } from "./ShiftRegister"
 
@@ -34,7 +37,8 @@ export const RegisterBaseDef =
             gridWidth: 7,
             gridHeight: numBits === 2 ? 11 : Math.max(15, 5 + numBits),
         }),
-        makeNodes: ({ numBits, gridHeight }) => {
+        makeNodes: ({ numBits, gridHeight, isXRay }) => {
+            const outX = isXRay ? 4 : 5
             const bottomOffset = (gridHeight + 1) / 2
             const clockYOffset = bottomOffset - 2
             const topOffset = -bottomOffset
@@ -42,12 +46,12 @@ export const RegisterBaseDef =
 
             return {
                 ins: {
-                    Clock: [-5, clockYOffset, "w", s.InputClockDesc, { isClock: true }],
+                    Clock: [-outX, clockYOffset, "w", s.InputClockDesc, { isClock: true }],
                     Pre: [0, topOffset, "n", s.InputPresetDesc, { prefersSpike: true }],
                     Clr: [0, bottomOffset, "s", s.InputClearDesc, { prefersSpike: true }],
                 },
                 outs: {
-                    Q: groupVertical("e", 5, 0, numBits),
+                    Q: groupVertical("e", outX, 0, numBits),
                 },
             }
         },
@@ -143,18 +147,21 @@ export abstract class RegisterBase<
         this.requestRedraw({ why: "show content changed" })
     }
 
-    protected doSetTrigger(trigger: EdgeTrigger) {
+    public doSetTrigger(trigger: EdgeTrigger) {
         this._trigger = trigger
         this.requestRedraw({ why: "trigger changed", invalidateTests: true })
+        this.invalidateXRay()
     }
 
     protected override doDraw(g: GraphicsRendering, ctx: DrawContext) {
-        this.doDrawDefault(g, ctx, (ctx) => {
-            if (this._showContent && !this.parent.editor.options.hideMemoryContent) {
-                RegisterBase.drawStoredValues(g, ctx, this.outputs.Q, this.posX, Orientation.isVertical(this.orient))
-            } else {
-                this.doDrawGenericCaption(g)
-            }
+        this.doDrawDefault(g, ctx, {
+            drawLabels: (ctx) => {
+                if (this._showContent && !this.parent.editor.options.hideMemoryContent) {
+                    RegisterBase.drawStoredValues(g, ctx, this.outputs.Q, this.posX, Orientation.isVertical(this.orient))
+                } else {
+                    this.doDrawGenericCaption(g)
+                }
+            },
         })
     }
 
@@ -213,13 +220,14 @@ export const RegisterDef =
             hasIncDec: inc,
         }),
         makeNodes: (params, defaults) => {
+            const isXRay = params.isXRay
             const base = RegisterBaseDef.makeNodes(params, defaults)
             const baseClear = base.ins.Clr
             const bottomOffset = base.ins.Clr[1]
             return {
                 ins: {
                     ...base.ins,
-                    D: groupVertical("w", -5, 0, params.numBits),
+                    D: groupVertical("w", isXRay ? -4 : -5, 0, params.numBits),
                     ...(!params.hasIncDec ? {} : {
                         Clr: [2, bottomOffset, "s", baseClear[3], baseClear[4]], // move Clr to the right
                         Inc: [-2, bottomOffset, "s"],
@@ -316,9 +324,11 @@ export class Register extends RegisterBase<RegisterRepr> {
         fillTextVAlign(g, TextVAlign.middle, `${this.numBits} bits`, this.posX, this.posY + 10)
     }
 
+
     private doSetSaturating(saturating: boolean) {
         this._saturating = saturating
         this.requestRedraw({ why: "saturating changed", invalidateTests: true })
+        this.invalidateXRay()
     }
 
     protected override makeRegisterSpecificContextMenuItems(): MenuItems {
@@ -336,6 +346,129 @@ export class Register extends RegisterBase<RegisterRepr> {
             this.makeChangeBooleanParamsContextMenuItem(s.ParamHasIncDec, this.hasIncDec, "inc"),
             ...toggleSaturatingItem,
         ]
+    }
+
+    protected override xrayScale(): number {
+        if (!this.hasIncDec) {
+            return this.numBits >= 16 ? 0.125 : this.numBits >= 8 ? 0.185 : this.numBits >= 4 ? 0.35 : 0.5
+        } else {
+            return this.numBits >= 16 ? 0.17 : this.numBits >= 8 ? 0.225 : 0.28
+        }
+    }
+
+    protected override makeXRay(level: number, scale: number, link: boolean) {
+        const bits = this.numBits
+        const edgeTrigger = this.trigger
+        const { xray, gate, wire } = this.parent.editor.newXRay(this, level, scale)
+        const { ins, outs, p } = this.makeXRayNodes(xray, link)
+
+        const storedValue = this.value
+        if (!this.hasIncDec) {
+            // simple register made of D flip-flops
+            const ffds = ArrayFillUsing(i => {
+                const ffd = FlipflopDDef.makeSpawned(xray, `ffd${i}`, 0, (i - (bits - 1) / 2) * 10 * GRID_STEP)
+                ffd.doSetTrigger(edgeTrigger)
+                ffd.storedValue = storedValue[i]
+                return ffd
+            }, bits)
+
+            const inputAlloc = xray.wires(ins.D, ffds.map(ffd => ffd.inputs.D), {
+                bookings: { colsRight: 4 },
+            })
+            const outputAlloc = xray.wires(ffds.map(ffd => ffd.outputs.Q), outs.Q, {
+                bookings: { colsLeft: 2 },
+            })
+
+            const clockLineX = inputAlloc.at(2)
+            const presetLineX = inputAlloc.at(0)
+            const clearLineX = outputAlloc.at(-1)
+
+            // clock
+            for (let i = 0; i < bits; i++) {
+                wire(ins.Clock, ffds[i].inputs.Clock, "hv", [clockLineX, ffds[i].inputs.Clock])
+            }
+
+            // preset
+            wire(ins.Pre, ffds[0].inputs.Pre)
+            for (let i = 1; i < bits; i++) {
+                wire(ins.Pre, ffds[i].inputs.Pre, "vh", [presetLineX, ffds[0].inputs.Pre])
+            }
+
+            // clear
+            for (let i = 0; i < bits - 1; i++) {
+                wire(ins.Clr, ffds[i].inputs.Clr, "vh", [clearLineX, ffds[bits - 1].inputs.Clr])
+            }
+            wire(ins.Clr, ffds[bits - 1].inputs.Clr)
+
+        } else {
+            // with inc/dec logic
+            const reg = RegisterDef.makeSpawned(xray, "reg", 5 * GRID_STEP, -7 * GRID_STEP, "e", { bits, inc: false })
+            reg.doSetValue(storedValue)
+            const mux = MuxDef.makeSpawned(xray, "mux", reg.posX - 7 * GRID_STEP, reg, "e", { from: 2 * bits, to: bits, bottom: true })
+
+            const incDecY = (mux.inputs.I[0][0].posY + mux.inputs.I[0][bits - 1].posY) / 2
+            const incDec = IncDecDef.makeSpawned(xray, "incdec", mux.posX - 5 * GRID_STEP, incDecY, "e", { bits })
+
+            const allocs = xray.wiresInZones(p.left, p.right, [{
+                id: "inToMux",
+                from: ins.D,
+                to: mux.inputs.I[1],
+                bookings: { colsRight: bits + 3 },
+                after: { compWidth: incDec.unrotatedWidth, comps: [incDec] },///*incDec, mux, reg*/] },
+            }, {
+                id: "incDecToMux",
+                from: incDec.outputs.Out,
+                to: mux.inputs.I[0],
+                after: { compWidth: mux.unrotatedWidth, comps: [mux] },
+            }, {
+                id: "muxToReg",
+                from: mux.outputs.Z,
+                to: reg.inputs.D,
+                bookings: { colsRight: 1 },
+                after: { compWidth: reg.unrotatedWidth, comps: [reg] },
+            }, {
+                id: "regOut",
+                from: reg.outputs.Q,
+                to: outs.Q,
+                alloc: { allDifferent: true, order: "top-down" },
+            }])
+
+            wire(ins.Pre, reg.inputs.Pre, "hv", [ins.Pre, p.top + 2])
+            wire(ins.Clr, reg.inputs.Clr, "vh", [reg.inputs.Clr, p.bottom - 2 - GRID_STEP])
+
+            const clockAnd = gate("clockAnd", "and", reg.inputs.Clock, mux.posY + mux.unrotatedHeight / 2 + GRID_STEP, "n")
+            wire(clockAnd, reg.inputs.Clock)
+
+            const norSel = gate("norSel", "nor", mux.inputs.S[0].posX - 3 * GRID_STEP, mux.inputs.S[0].posY + 2 * GRID_STEP)
+            wire(norSel, mux.inputs.S[0], "hv")
+            wire(ins.Inc, norSel.in[1], "vh", [norSel.in[0].posX - GRID_STEP, p.bottom - 2])
+            wire(ins.Dec, norSel.in[0], "vh", [norSel.in[1].posX - 2 * GRID_STEP, p.bottom - 2 - GRID_STEP])
+            wire(ins.Clock, clockAnd.in[1], "hv")
+
+            const andIncDec = gate("andIncDec", this._saturating ? "and" : "nand", norSel.posX + 2 * GRID_STEP, ins.Clock.posY - 3 * GRID_STEP)
+            wire(ins.Inc, andIncDec.in[1], "vh", [norSel.in[0].posX - GRID_STEP, p.bottom - 2])
+            wire(ins.Dec, andIncDec.in[0], "vh", [norSel.in[1].posX - 2 * GRID_STEP, p.bottom - 2 - GRID_STEP])
+            if (!this._saturating) {
+                wire(andIncDec, clockAnd.in[0], "hv")
+            } else {
+                const norSat = gate("norSat", "nor", clockAnd.in[0].posX - 0.5 * GRID_STEP, andIncDec.outputs.Out.posY - 6 * GRID_STEP, "n")
+                wire(incDec.outputs.Cout, norSat.in[0], "hv", [norSel.in[1], norSat.in[1].posY + 0.5 * GRID_STEP])
+                wire(andIncDec, norSat.in[1], "hv")
+                wire(norSat, clockAnd.in[0], "vh")
+            }
+            wire(ins.Dec, incDec.inputs.Dec, "vh", [norSel.in[1].posX - 2 * GRID_STEP, p.bottom - 2 - GRID_STEP])
+
+            const loopbackLineInc = -allocs.regOut.inc
+            const loopbackLineBottomY = incDec.inputs.Dec.posY - 2 * GRID_STEP - bits * loopbackLineInc
+            for (let i = 0; i < bits; i++) {
+                wire(reg.outputs.Q[i], incDec.inputs.In[i], "hv", [
+                    [allocs.regOut.at(i), loopbackLineBottomY + i * loopbackLineInc],
+                    [allocs.inToMux.at(2 + (bits - 1 - i)), incDec.inputs.In[i]],
+                ])
+            }
+        }
+
+        return xray
     }
 
 }
