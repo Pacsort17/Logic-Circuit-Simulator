@@ -52,8 +52,7 @@ import swap from '../img/icons/swap.icon.svg'; // @ts-ignore
 import testcase from '../img/icons/testcase.icon.svg'; // @ts-ignore
 import timer from '../img/icons/timer.icon.svg'; // @ts-ignore
 import trash from '../img/icons/trash.icon.svg'; // @ts-ignore
-// TODO : CHANGE THIS ICON
-import tutorial from '../img/icons/download.icon.svg'; // @ts-ignore
+import tutorial from '../img/icons/tutorial.icon.svg'; // @ts-ignore
 import undo from '../img/icons/undo.icon.svg'; // @ts-ignore
 import wirestyle from '../img/icons/wirestyle.icon.svg'; // @ts-ignore
 import xray from '../img/icons/xray.icon.svg'; // @ts-ignore

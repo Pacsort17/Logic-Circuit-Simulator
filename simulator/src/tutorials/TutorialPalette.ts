@@ -10,8 +10,8 @@ import { ComponentTypeInput, ComponentTypeOutput, LogicValue, setVisible } from 
 import { TutorialContent, TutorialContentBlock, TutorialDoubleTruthTableBlock, TutorialImageBlock, TutorialParagraphBlock } from "./TutorialContent"
 
 type TutorialComponentMatcher =
-    | { componentType: string }
-    | { gateType: string }
+    | { componentType: string, name?: string }
+    | { gateType: string, inputs?: TutorialComponentMatcher[] }
 
 type TruthTableTestState = "unknown" | "running" | "passed" | "failed"
 type DynamicTruthTableCell = string | number
@@ -30,23 +30,43 @@ class TutorialStep {
     ) { }
 }
 
+class TutorialDefinition {
+    public constructor(
+        public readonly id: string,
+        public readonly title: string,
+        public readonly description: string,
+        public readonly createSteps: () => readonly TutorialStep[],
+        public readonly truthTableStepIndex?: number,
+        public readonly referenceTruthTableHeaders: readonly string[] = [],
+        public readonly referenceTruthTableRows: DynamicTruthTableCell[][] = [],
+    ) { }
+}
+
 export class TutorialPalette {
     public readonly rootElem: HTMLDivElement
     private readonly content: TutorialContent
+    private readonly titleElem: HTMLDivElement
     private readonly nextButton: HTMLButtonElement
     private readonly previousButton: HTMLButtonElement
     private readonly pageCounter: HTMLSpanElement
+    private readonly bodyElem: HTMLDivElement
     private readonly checklistElem: HTMLDivElement
+    private readonly actionsElem: HTMLDivElement
+    private readonly tutorialDefinitions: readonly TutorialDefinition[]
+    private activeTutorial: TutorialDefinition | undefined = undefined
+    private steps: readonly TutorialStep[] = []
     private currentObjectiveCheckboxes: HTMLInputElement[] = []
     private completionListenerCleanups: Array<() => void> = []
     private readonly manuallyCompletedObjectives = new Set<string>()
+    private readonly completedTutorialIds = new Set<string>()
+    private readonly manuallyUnlockedTutorialIds = new Set<string>()
     private truthTableTestState: TruthTableTestState = "unknown"
     private truthTableTestIsRunning = false
     private truthTableTestRunId = 0
     private dynamicTruthTableHeaders: readonly string[] = ["A", "Y = A̅"]
-    private readonly referenceTruthTableHeaders: readonly string[] = ["A", "Y = A̅"]
+    private referenceTruthTableHeaders: readonly string[] = ["A", "Y = A̅"]
     private dynamicTruthTableHasInputsAndOutputs = false
-    private readonly referenceTruthTableRows: DynamicTruthTableCell[][] = [
+    private referenceTruthTableRows: DynamicTruthTableCell[][] = [
         [0, 1],
         [1, 0],
     ]
@@ -57,101 +77,16 @@ export class TutorialPalette {
     private dynamicTruthTableHighlightedRowIndex: number | undefined = undefined
     private currentStep = 0
 
-    /** Tutorial steps */
-    private readonly step0: TutorialStep = new TutorialStep([
-        new TutorialParagraphBlock('Bienvenue dans le simulateur logique "Logic" !'),
-        new TutorialParagraphBlock("Il vous permet de dessiner des circuits logiques en plaçant des entrées, des portes logiques, des sorties, puis en les reliant avec des fils."),
-        new TutorialParagraphBlock("Dans ce tutoriel, vous allez construire le circuit correspondant à la fonction logique Y = A̅."),
-        new TutorialParagraphBlock('Cliquez sur "Suivant" pour commencer.'),
-   
-    ], [])
-    private readonly step1: TutorialStep = new TutorialStep([
-        new TutorialParagraphBlock('Les composants se trouvent dans la barre située à gauche du simulateur. L’entrée logique correspond au composant "in".'),
-        new TutorialImageBlock("simulator/img/Input1.svg", "Symbole d’entrée", "Entrée"),
-        new TutorialParagraphBlock('Cliquez sur l\'icône pour en faire apparaître une sur le canevas.'),
-        new TutorialParagraphBlock("Vous pouvez ensuite déplacer cette entrée (cliquez dessus et maintenez le clic enfoncé durant le déplacement')."),
-        new TutorialParagraphBlock('Pour renommer l’entrée, cliquez dessus avec deux doigts, sélectionnez le menu "Set Name...". Nommez cette entrée "A".'),
-    ], [
-        new TutorialObjective('Placer un objet "in" sur le canevas', () => this.hasPlacedComponent(ComponentTypeInput)),
-        new TutorialObjective('Renommer l’entrée en "A"', () => this.hasInputNamed("A")),
-    ])
-    private readonly step2: TutorialStep = new TutorialStep([
-        new TutorialParagraphBlock('Ajoutez maintenant la porte logique Non. Elle s’appelle "Not" et se trouve dans la partie "Gates" de la barre de gauche.'),
-        new TutorialImageBlock("simulator/img/not.svg", "Porte logique NON", "Porte non"),
-        new TutorialParagraphBlock('Cliquez sur la porte "Not" pour la faire apparaître, puis déplacez-la à droite de l’entrée A.'),
-        new TutorialParagraphBlock("Pour relier l’entrée à la porte, cliquez sur le point situé à droite de l’entrée, maintenez le clic, puis amenez le fil qui apparaît jusqu’au point situé à gauche de la porte Non."),
-    ], [
-        new TutorialObjective('Placer une porte "not" sur le canevas', () => this.hasPlacedGate("not")),
-        new TutorialObjective('Relier l’entrée A à la porte "not"', () => this.hasPlacedWireBetween(
-            { componentType: ComponentTypeInput },
-            { gateType: "not" },
-        )),
-    ])
-    private readonly step3: TutorialStep = new TutorialStep([
-        new TutorialParagraphBlock("Il arrive régulièrement de faire des erreurs !"),
-        new TutorialParagraphBlock("Pour supprimer un élément, sélectionnez-le sur le canevas, puis appuyez sur la touche Backspace, celle qui se trouve au-dessus de la touche Entrée sur le clavier."),
-        new TutorialParagraphBlock("Pour cette étape, supprimez la porte Non que vous venez d’ajouter."),
-    ], [
-        new TutorialObjective('Supprimer la porte non', () => !this.hasPlacedGate("not")),
-    ])
-    private readonly step4: TutorialStep = new TutorialStep([
-        new TutorialParagraphBlock("Reconstruisez maintenant le circuit complet."),
-        new TutorialParagraphBlock('Ajoutez une porte Non depuis la partie "Gates" de la barre de gauche, puis déplacez-la à droite de l’entrée A.'),
-        new TutorialParagraphBlock('Ajoutez ensuite une sortie : le composant se nomme "out" et se trouve lui aussi dans la barre de gauche. Placez cette sortie à droite de la porte Non.'),
-        new TutorialImageBlock("simulator/img/Output1.svg", "Symbole de sortie", "Sortie"),
-        new TutorialParagraphBlock('Renommez la sortie en cliquant dessus avec deux doigts, puis en sélectionnant "Set Name...". Nommez cette sortie "Y".'),
-        new TutorialParagraphBlock("Enfin, reliez l’entrée A à la porte Non, puis reliez la porte Non à la sortie Y (cliquez sur le point situé à droite de la porte Non et maintenez le clic pendant le déplacement pour créer le fil et l'amener jusqu’au point situé à gauche de la sortie Y)."),
-        
-    ], [
-        new TutorialObjective('Remettre une porte "not" sur le canevas', () => this.hasPlacedGate("not")),
-        new TutorialObjective('Placer un objet "out" sur le canevas', () => this.hasPlacedComponent(ComponentTypeOutput)),
-        new TutorialObjective('Renommer la sortie en "Y"', () => this.hasOutputNamed("Y")),
-        new TutorialObjective('Relier l’entrée A à la porte "not"', () => this.hasPlacedWireBetween(
-            { componentType: ComponentTypeInput },
-            { gateType: "not" },
-        )),
-        new TutorialObjective('Brancher un fil entre "not" et "out"', () => this.hasPlacedWireBetween(
-            { gateType: "not" },
-            { componentType: ComponentTypeOutput },
-        )),
-    ])
-    private readonly step5: TutorialStep = new TutorialStep([
-        new TutorialParagraphBlock("Pour vérifier votre circuit, comparez les deux tables de vérité ci-dessous."),
-        new TutorialDoubleTruthTableBlock(
-            () => this.dynamicTruthTableHeaders,
-            () => this.dynamicTruthTableRows,
-            this.referenceTruthTableHeaders,
-            () => this.referenceTruthTableRows,
-            () => this.dynamicTruthTableHighlightedRowIndex,
-        ),
-        new TutorialParagraphBlock("La table de gauche correspond à la simulation de votre circuit : elle est calculée automatiquement à partir des composants et des fils que vous avez placés."),
-        new TutorialParagraphBlock("La table de droite est la table de référence : c’est le résultat qui doit être obtenu pour la fonction Y = A̅."),
-        new TutorialParagraphBlock("Pour tester le circuit, cliquez sur l’entrée A afin de changer sa valeur. La ligne jaune indique le cas actuellement présent sur le circuit."),
-    ], 
-    [
-        new TutorialObjective("Comparer le circuit avec la table de vérité", () => this.hasValidTruthTable()),
-    ])
-    private readonly step6: TutorialStep = new TutorialStep([
-        new TutorialParagraphBlock("Bien joué, vous avez réussi le TP !"),
-        new TutorialParagraphBlock("Vous savez maintenant dessiner un circuit logique :)"),
-    ], [])
-
-    private readonly steps = [
-        this.step0,
-        this.step1,
-        this.step2,
-        this.step3,
-        this.step4,
-        this.step5,
-        this.step6,
-    ]
-
     public constructor(private readonly editor: LogicEditor) {
         const close = span("×", cls("tutorial-close")).render()
         close.addEventListener("click", () => editor.setTutorialPaletteVisible(false))
         close.addEventListener("pointerdown", e => e.stopPropagation())
 
         this.content = new TutorialContent(editor)
+        this.tutorialDefinitions = [
+            this.createInverterTutorial(),
+            this.createCompoundLogicTutorial(),
+        ]
 
         this.nextButton = button(
             type("button"),
@@ -169,34 +104,34 @@ export class TutorialPalette {
 
         this.pageCounter = span(cls("tutorial-page-counter")).render()
         this.checklistElem = div(cls("tutorial-checklist")).render()
+        this.bodyElem = div(cls("tutorial-body")).render()
+        this.titleElem = div(cls("tutorial-title")).render()
+        this.actionsElem = div(cls("tutorial-actions"),
+            this.previousButton,
+            this.pageCounter,
+            this.nextButton,
+        ).render()
 
         const heading = div(cls("tutorial-heading"),
-            div(cls("tutorial-title"),
-                "Tutoriel : Dessinez le circuit Y = A̅",
-            ),
+            this.titleElem,
             close,
         ).render()
         heading.addEventListener("pointerdown", e => this.startDraggingPalette(e))
 
         this.rootElem = div(cls("tutorial-palette sim-toolbar-right"),
             heading,
-            this.content.rootElem,
-            this.checklistElem,
-            div(cls("tutorial-actions"),
-                this.previousButton,
-                this.pageCounter,
-                this.nextButton,
-            ),
+            this.bodyElem,
+            this.actionsElem,
         ).render()
 
-        this.updateDisplayedStep()
+        this.showTutorialMenu()
         setVisible(this.rootElem, false)
         editor.html.canvasContainer.appendChild(this.rootElem)
     }
 
     public setVisible(visible: boolean) {
         setVisible(this.rootElem, visible)
-        if (visible) {
+        if (visible && this.activeTutorial !== undefined) {
             this.startListeningForCompletionChanges()
             this.refreshCompletionState()
         } else {
@@ -204,9 +139,85 @@ export class TutorialPalette {
         }
     }
 
+    private showTutorialMenu() {
+        this.stopListeningForCompletionChanges()
+        this.activeTutorial = undefined
+        this.steps = []
+        this.currentStep = 0
+        this.currentObjectiveCheckboxes = []
+        this.manuallyCompletedObjectives.clear()
+        this.content.setBlocks([])
+        this.checklistElem.innerHTML = ""
+        this.bodyElem.innerHTML = ""
+        this.bodyElem.scrollTop = 0
+        this.titleElem.textContent = "Tutoriels"
+        setVisible(this.actionsElem, false)
+
+        const tutorialItems = this.tutorialDefinitions.map((definition, index) => {
+            const isUnlocked = this.isTutorialUnlocked(index)
+            const startButton = button(
+                type("button"),
+                cls("tutorial-menu-start-button"),
+                "Démarrer",
+            ).render()
+            startButton.setAttribute("aria-disabled", String(!isUnlocked))
+            startButton.classList.toggle("tutorial-menu-start-button-locked", !isUnlocked)
+            startButton.addEventListener("click", e => {
+                if (!this.isTutorialUnlocked(index)) {
+                    e.preventDefault()
+                    return
+                }
+                this.startTutorial(definition)
+            })
+            if (!isUnlocked) {
+                startButton.title = "Terminez le tutoriel précédent pour débloquer celui-ci."
+                startButton.addEventListener("dblclick", e => {
+                    e.preventDefault()
+                    this.manuallyUnlockedTutorialIds.add(definition.id)
+                    this.showTutorialMenu()
+                })
+            }
+            const lockedMessage = isUnlocked ? [] : [
+                div(cls("tutorial-menu-item-locked"), "Terminez le tutoriel précédent pour débloquer celui-ci.").render(),
+            ]
+
+            return div(cls("tutorial-menu-item"),
+                div(cls("tutorial-menu-item-title"), definition.title),
+                div(cls("tutorial-menu-item-description"), definition.description),
+                ...lockedMessage,
+                startButton,
+            ).render()
+        })
+        this.bodyElem.appendChild(div(cls("tutorial-menu"),
+            ...tutorialItems,
+        ).render())
+    }
+
+    private startTutorial(tutorial: TutorialDefinition) {
+        this.stopListeningForCompletionChanges()
+        this.activeTutorial = tutorial
+        this.steps = tutorial.createSteps()
+        this.currentStep = 0
+        this.manuallyCompletedObjectives.clear()
+        this.referenceTruthTableHeaders = tutorial.referenceTruthTableHeaders
+        this.referenceTruthTableRows = tutorial.referenceTruthTableRows
+        this.resetTruthTableTest()
+        this.resetDynamicTruthTableDisplay()
+        this.updateDisplayedStep()
+        if (this.rootElem.style.display !== "none") {
+            this.startListeningForCompletionChanges()
+        }
+    }
+
     private goToNextStep() {
+        if (this.activeTutorial === undefined) {
+            return
+        }
         if (this.currentStep === this.steps.length - 1) {
-            this.editor.setTutorialPaletteVisible(false)
+            if (this.isCurrentStepCompleted()) {
+                this.completedTutorialIds.add(this.activeTutorial.id)
+            }
+            this.showTutorialMenu()
         } else if (this.isCurrentStepCompleted()) {
             this.currentStep++
             this.updateDisplayedStep()
@@ -214,10 +225,15 @@ export class TutorialPalette {
     }
 
     private goToPreviousStep() {
-        if (this.currentStep > 0) {
-            this.currentStep--
-            this.updateDisplayedStep()
+        if (this.activeTutorial === undefined) {
+            return
         }
+        if (this.currentStep === 0) {
+            this.showTutorialMenu()
+            return
+        }
+        this.currentStep--
+        this.updateDisplayedStep()
     }
 
     private startDraggingPalette(e: PointerEvent) {
@@ -261,16 +277,28 @@ export class TutorialPalette {
     }
 
     private updateDisplayedStep() {
+        if (this.activeTutorial === undefined) {
+            this.showTutorialMenu()
+            return
+        }
+        this.bodyElem.replaceChildren(this.content.rootElem, this.checklistElem)
+        this.titleElem.textContent = this.activeTutorial.title
+        setVisible(this.actionsElem, true)
         this.content.setBlocks(this.steps[this.currentStep].content)
+        this.bodyElem.scrollTop = 0
         this.pageCounter.textContent = `Etape ${this.currentStep + 1} / ${this.steps.length}`
         this.nextButton.textContent = this.currentStep === this.steps.length - 1 ? "Fermer" : "Suivant"
+        this.previousButton.textContent = this.currentStep === 0 ? "Tutoriels" : "Précédent"
         this.renderChecklist()
         this.refreshCompletionState()
         setVisible(this.nextButton, true)
-        setVisible(this.previousButton, this.currentStep > 0)
+        setVisible(this.previousButton, true)
     }
 
     private refreshCompletionState() {
+        if (this.activeTutorial === undefined) {
+            return
+        }
         this.scheduleTruthTableTestIfNeeded()
 
         const step = this.steps[this.currentStep]
@@ -351,6 +379,15 @@ export class TutorialPalette {
         )
     }
 
+    private isTutorialUnlocked(index: number): boolean {
+        const definition = this.tutorialDefinitions[index]
+        return (
+            index === 0
+            || this.completedTutorialIds.has(this.tutorialDefinitions[index - 1].id)
+            || this.manuallyUnlockedTutorialIds.has(definition.id)
+        )
+    }
+
     private isObjectiveManuallyCompleted(stepIndex: number, objectiveIndex: number): boolean {
         return this.manuallyCompletedObjectives.has(this.objectiveKey(stepIndex, objectiveIndex))
     }
@@ -368,9 +405,23 @@ export class TutorialPalette {
         this.truthTableTestRunId++
     }
 
+    private resetDynamicTruthTableDisplay() {
+        this.dynamicTruthTableHeaders = this.referenceTruthTableHeaders.length > 0
+            ? this.referenceTruthTableHeaders
+            : ["?"]
+        this.dynamicTruthTableRows = this.referenceTruthTableRows.length > 0
+            ? this.referenceTruthTableRows.map(row => row.map((cell, index) =>
+                index === row.length - 1 ? "?" : cell
+            ))
+            : [["?"]]
+        this.dynamicTruthTableHasInputsAndOutputs = false
+        this.dynamicTruthTableHighlightedRowIndex = undefined
+        this.content.refresh()
+    }
+
     private scheduleTruthTableTestIfNeeded() {
         if (
-            this.currentStep !== this.steps.indexOf(this.step5)
+            this.activeTutorial?.truthTableStepIndex !== this.currentStep
             || this.truthTableTestState !== "unknown"
             || this.truthTableTestIsRunning
         ) {
@@ -537,6 +588,20 @@ export class TutorialPalette {
         return this.placedComponents().some(comp => comp instanceof GateBase && comp.type === gateType)
     }
 
+    private hasPlacedGateCount(gateType: string, count: number): boolean {
+        return this.placedComponents()
+            .filter(comp => comp instanceof GateBase && comp.type === gateType)
+            .length >= count
+    }
+
+    private hasNoPlacedComponents(): boolean {
+        return this.placedComponents().length === 0
+    }
+
+    private hasPlacedComponentMatching(matcher: TutorialComponentMatcher): boolean {
+        return this.placedComponents().some(comp => this.matchesComponent(comp, matcher))
+    }
+
     private hasPlacedWireBetween(from: TutorialComponentMatcher, to: TutorialComponentMatcher): boolean {
         for (const wire of this.editor.editorRoot.linkMgr.wires) {
             const startComponent = wire.startNode.component
@@ -549,6 +614,17 @@ export class TutorialPalette {
             }
         }
         return false
+    }
+
+    private hasIncomingWiresFrom(component: Component, matchers: readonly TutorialComponentMatcher[], visitedComponents: Set<Component>): boolean {
+        const incomingWires = component.inputs._all.flatMap(input =>
+            input.incomingWire === null ? [] : [input.incomingWire]
+        )
+        return matchers.every(matcher =>
+            incomingWires.some(wire =>
+                this.matchesComponent(wire.startNode.component, matcher, new Set(visitedComponents))
+            )
+        )
     }
 
     private logicValueAsTruthTableCell(value: LogicValue): DynamicTruthTableCell {
@@ -592,13 +668,228 @@ export class TutorialPalette {
         return component.def.type === ComponentTypeOutput
     }
 
-    private matchesComponent(component: Component, matcher: TutorialComponentMatcher): boolean {
+    private matchesComponent(component: Component, matcher: TutorialComponentMatcher, visitedComponents: Set<Component> = new Set()): boolean {
         if (component.state !== ComponentState.SPAWNED) {
             return false
         }
         if ("componentType" in matcher) {
-            return component.def.type === matcher.componentType
+            if (component.def.type !== matcher.componentType) {
+                return false
+            }
+            if (matcher.name !== undefined) {
+                return (
+                    (this.isInputComponent(component) || this.isOutputComponent(component))
+                    && component.name === matcher.name
+                )
+            }
+            return true
         }
-        return component instanceof GateBase && component.type === matcher.gateType
+        if (!(component instanceof GateBase) || component.type !== matcher.gateType) {
+            return false
+        }
+        if (matcher.inputs === undefined) {
+            return true
+        }
+        if (visitedComponents.has(component)) {
+            return false
+        }
+        visitedComponents.add(component)
+        return this.hasIncomingWiresFrom(component, matcher.inputs, visitedComponents)
+    }
+
+    private createInverterTutorial(): TutorialDefinition {
+        const referenceTruthTableHeaders: readonly string[] = ["A", "Y = A̅"]
+        const referenceTruthTableRows: DynamicTruthTableCell[][] = [
+            [0, 1],
+            [1, 0],
+        ]
+
+        return new TutorialDefinition(
+            "inverter",
+            "Dessinez le circuit Y = A̅",
+            "Dessinez votre premier circuit logique !",
+            () => [
+                new TutorialStep([
+                    new TutorialParagraphBlock('Bienvenue dans le simulateur logique "Logic" !'),
+                    new TutorialParagraphBlock("Il vous permet de dessiner des circuits logiques en plaçant des entrées, des portes logiques, des sorties, puis en les reliant avec des fils."),
+                    new TutorialParagraphBlock("Dans ce tutoriel, vous allez construire le circuit correspondant à la fonction logique Y = A̅."),
+                    new TutorialParagraphBlock('Cliquez sur "Suivant" pour commencer.'),
+                ], []),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Les composants se trouvent dans la barre située à gauche du simulateur. L’entrée logique correspond au composant "in".'),
+                    new TutorialImageBlock("simulator/img/Input1.svg", "Symbole d’entrée", "Entrée"),
+                    new TutorialParagraphBlock('Cliquez sur l\'icône pour en faire apparaître une sur le canevas.'),
+                    new TutorialParagraphBlock("Vous pouvez ensuite déplacer cette entrée (cliquez dessus et maintenez le clic enfoncé durant le déplacement)."),
+                    new TutorialParagraphBlock('Pour renommer l’entrée, cliquez dessus avec deux doigts, sélectionnez le menu "Set Name...". Nommez cette entrée "A".'),
+                ], [
+                    new TutorialObjective('Placer une entrée', () => this.hasPlacedComponent(ComponentTypeInput)),
+                    new TutorialObjective('Renommer l’entrée en "A"', () => this.hasInputNamed("A")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Ajoutez maintenant la porte logique Non. Elle s’appelle "Not" et se trouve dans la partie "Gates" de la barre de gauche.'),
+                    new TutorialImageBlock("simulator/img/not.svg", "Porte logique NON", "Porte non"),
+                    new TutorialParagraphBlock('Cliquez sur la porte "Not" pour la faire apparaître, puis déplacez-la à droite de l’entrée A.'),
+                    new TutorialParagraphBlock("Pour relier l’entrée à la porte, cliquez sur le point situé à droite de l’entrée, maintenez le clic, puis amenez le fil qui apparaît jusqu’au point situé à gauche de la porte Non."),
+                ], [
+                    new TutorialObjective('Placer une porte non', () => this.hasPlacedGate("not")),
+                    new TutorialObjective('Relier l’entrée A à la porte non', () => this.hasPlacedWireBetween(
+                        { componentType: ComponentTypeInput },
+                        { gateType: "not" },
+                    )),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Il arrive régulièrement de faire des erreurs !"),
+                    new TutorialParagraphBlock("Pour supprimer un élément, sélectionnez-le sur le canevas, puis appuyez sur la touche Backspace, celle qui se trouve au-dessus de la touche Entrée sur le clavier."),
+                    new TutorialParagraphBlock("Pour cette étape, supprimez la porte Non que vous venez d’ajouter."),
+                ], [
+                    new TutorialObjective("Supprimer la porte non", () => !this.hasPlacedGate("not")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Reconstruisez maintenant le circuit complet."),
+                    new TutorialParagraphBlock('Ajoutez une porte Non depuis la partie "Gates" de la barre de gauche, puis déplacez-la à droite de l’entrée A.'),
+                    new TutorialParagraphBlock('Ajoutez ensuite une sortie : le composant se nomme "out" et se trouve lui aussi dans la barre de gauche. Placez cette sortie à droite de la porte Non.'),
+                    new TutorialImageBlock("simulator/img/Output1.svg", "Symbole de sortie", "Sortie"),
+                    new TutorialParagraphBlock('Renommez la sortie en cliquant dessus avec deux doigts, puis en sélectionnant "Set Name...". Nommez cette sortie "Y".'),
+                    new TutorialParagraphBlock("Enfin, reliez l’entrée A à la porte Non, puis reliez la porte Non à la sortie Y (cliquez sur le point situé à droite de la porte Non et maintenez le clic pendant le déplacement pour créer le fil et l'amener jusqu’au point situé à gauche de la sortie Y)."),
+                ], [
+                    new TutorialObjective('Remettre une porte non', () => this.hasPlacedGate("not")),
+                    new TutorialObjective('Placer une sortie', () => this.hasPlacedComponent(ComponentTypeOutput)),
+                    new TutorialObjective('Renommer la sortie en "Y"', () => this.hasOutputNamed("Y")),
+                    new TutorialObjective('Relier l’entrée A à la porte non', () => this.hasPlacedWireBetween(
+                        { componentType: ComponentTypeInput },
+                        { gateType: "not" },
+                    )),
+                    new TutorialObjective('Brancher un fil entre la porte non et la sortie', () => this.hasPlacedWireBetween(
+                        { gateType: "not" },
+                        { componentType: ComponentTypeOutput },
+                    )),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Pour vérifier votre circuit, comparez les deux tables de vérité ci-dessous."),
+                    new TutorialDoubleTruthTableBlock(
+                        () => this.dynamicTruthTableHeaders,
+                        () => this.dynamicTruthTableRows,
+                        referenceTruthTableHeaders,
+                        () => referenceTruthTableRows,
+                        () => this.dynamicTruthTableHighlightedRowIndex,
+                    ),
+                    new TutorialParagraphBlock("La table de gauche correspond à la simulation de votre circuit : elle est calculée automatiquement à partir des composants et des fils que vous avez placés."),
+                    new TutorialParagraphBlock("La table de droite est la table de référence : c’est le résultat qui doit être obtenu pour la fonction Y = A̅."),
+                    new TutorialParagraphBlock("Pour tester le circuit, cliquez sur l’entrée A afin de changer sa valeur. La ligne jaune indique le cas actuellement présent sur le circuit."),
+                ], [
+                    new TutorialObjective("Comparer le circuit avec la table de vérité", () => this.hasValidTruthTable()),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Bien joué, vous avez terminé le tutoriel !"),
+                    new TutorialParagraphBlock("Vous savez maintenant dessiner un circuit logique :)"),
+                ], []),
+            ],
+            5,
+            referenceTruthTableHeaders,
+            referenceTruthTableRows,
+        )
+    }
+
+    private createCompoundLogicTutorial(): TutorialDefinition {
+        const referenceTruthTableHeaders: readonly string[] = ["A", "B", "C", "Y"]
+        const referenceTruthTableRows: DynamicTruthTableCell[][] = [
+            [0, 0, 0, 1],
+            [0, 0, 1, 1],
+            [0, 1, 0, 1],
+            [0, 1, 1, 1],
+            [1, 0, 0, 0],
+            [1, 0, 1, 0],
+            [1, 1, 0, 1],
+            [1, 1, 1, 0],
+        ]
+        const inputA: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "A" }
+        const inputB: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "B" }
+        const inputC: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "C" }
+        const outputY: TutorialComponentMatcher = { componentType: ComponentTypeOutput, name: "Y" }
+        const notA: TutorialComponentMatcher = { gateType: "not", inputs: [inputA] }
+        const notC: TutorialComponentMatcher = { gateType: "not", inputs: [inputC] }
+        const andBNotC: TutorialComponentMatcher = { gateType: "and", inputs: [inputB, notC] }
+        const finalOr: TutorialComponentMatcher = { gateType: "or", inputs: [notA, andBNotC] }
+
+        return new TutorialDefinition(
+            "one-output-combinational-logic",
+            "Dessinez le circuit Y = A̅ ou (B et C̅)",
+            "Dessinez un circuit logique classique avec plusieurs entrées et une sortie.",
+            () => [
+                new TutorialStep([
+                    new TutorialParagraphBlock("Vous allez maintenant dessiner le circuit correspondant à la fonction logique Y = A̅ ou (B et C̅)."),
+                    new TutorialParagraphBlock("Vous allez construire ce circuit progressivement : d’abord les entrées A, B et C, puis les portes Non, Et et Ou, et enfin la sortie Y."),
+                    new TutorialParagraphBlock('Commencez sans aucun circuit, puis cliquez sur "Suivant" pour commencer.'),
+                ], [
+                    new TutorialObjective("Supprimer tous les composants présents", () => this.hasNoPlacedComponents()),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Commencez par créer trois entrées avec le composant "in".'),
+                    new TutorialImageBlock("simulator/img/Input1.svg", "Symbole d’entrée", "Entrée"),
+                    new TutorialParagraphBlock('Renommez-les ensuite "A", "B" et "C".'),
+                ], [
+                    new TutorialObjective('Créer l’entrée "A"', () => this.hasInputNamed("A")),
+                    new TutorialObjective('Créer l’entrée "B"', () => this.hasInputNamed("B")),
+                    new TutorialObjective('Créer l’entrée "C"', () => this.hasInputNamed("C")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Créez maintenant une porte Non.'),
+                    new TutorialImageBlock("simulator/img/not.svg", "Porte logique NON", "Porte non"),
+                    new TutorialParagraphBlock("Reliez l’entrée C à cette porte Non pour calculer C̅."),
+                ], [
+                    new TutorialObjective('Placer une porte non', () => this.hasPlacedGate("not")),
+                    new TutorialObjective('Relier l’entrée C à la porte non', () => this.hasPlacedComponentMatching(notC)),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Créez une porte Et (Porte logique "And" dans la partie "Gates" de la barre à gauche).'),
+                    new TutorialImageBlock("simulator/img/and.svg", "Porte logique ET", "Porte et"),
+                    new TutorialParagraphBlock("Reliez l’entrée B et la sortie de C̅ à cette porte Et."),
+                ], [
+                    new TutorialObjective('Placer une porte et', () => this.hasPlacedGate("and")),
+                    new TutorialObjective('Relier B et C̅ à la porte et', () => this.hasPlacedComponentMatching(andBNotC)),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Créez une deuxième porte Non.'),
+                    new TutorialParagraphBlock("Reliez l’entrée A à cette nouvelle porte Non pour calculer A̅."),
+                ], [
+                    new TutorialObjective('Placer une deuxième porte non', () => this.hasPlacedGateCount("not", 2)),
+                    new TutorialObjective('Relier l’entrée A à la deuxième porte non', () => this.hasPlacedComponentMatching(notA)),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Créez une porte Ou ("Or").'),
+                    new TutorialImageBlock("simulator/img/or.svg", "Porte logique OU", "Porte ou"),
+                    new TutorialParagraphBlock("Reliez A̅ et le résultat de (B et C̅) à cette porte Ou."),
+                ], [
+                    new TutorialObjective('Placer une porte ou', () => this.hasPlacedGate("or")),
+                    new TutorialObjective('Relier A̅ et (B et C̅) à la porte ou', () => this.hasPlacedComponentMatching(finalOr)),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Créez une sortie, et nommez-la "Y".'),
+                    new TutorialImageBlock("simulator/img/Output1.svg", "Symbole de sortie", "Sortie"),
+                    new TutorialParagraphBlock('Reliez la sortie de la porte Ou à cette sortie Y.'),
+                ], [
+                    new TutorialObjective('Créer la sortie "Y"', () => this.hasOutputNamed("Y")),
+                    new TutorialObjective('Relier la porte ou à la sortie Y', () => this.hasPlacedWireBetween(finalOr, outputY)),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Pour vérifier votre circuit, comparez les deux tables de vérité ci-dessous."),
+                    new TutorialDoubleTruthTableBlock(
+                        () => this.dynamicTruthTableHeaders,
+                        () => this.dynamicTruthTableRows,
+                        referenceTruthTableHeaders,
+                        () => referenceTruthTableRows,
+                        () => this.dynamicTruthTableHighlightedRowIndex,
+                    ),
+                    new TutorialParagraphBlock("La table de gauche est calculée par la simulation de votre circuit."),
+                    new TutorialParagraphBlock("La table de droite est la référence attendue pour Y = A̅ ou (B et C̅)."),
+                    new TutorialParagraphBlock("Si les deux tables sont identiques, votre circuit est correct."),
+                ], [
+                    new TutorialObjective("Comparer les deux tables de vérité", () => this.hasValidTruthTable()),
+                ]),
+            ],
+            7,
+            referenceTruthTableHeaders,
+            referenceTruthTableRows,
+        )
     }
 }

@@ -792,7 +792,10 @@ svg text {
   position: absolute;
   top: 50px;
   right: 200px;
-  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  max-width: 30%;
+  max-height: 80%;
   padding: 10px;
   z-index: 13;
 }
@@ -811,15 +814,57 @@ svg text {
 
 .tutorial-title {
   position: relative;
-  min-width: max-content;
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: bold;
   font-size: 110%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tutorial-close {
   position: relative;
+  flex: none;
   padding-left: 30px;
   cursor: pointer;
+}
+
+.tutorial-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.tutorial-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 20px 20px 20px;
+}
+
+.tutorial-menu-item {
+  padding: 12px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.35);
+}
+
+.tutorial-menu-item-title {
+  margin-bottom: 5px;
+  font-weight: bold;
+}
+
+.tutorial-menu-item-description {
+  margin-bottom: 10px;
+  line-height: 1.3;
+  opacity: 0.85;
+}
+
+.tutorial-menu-item-locked {
+  margin-bottom: 10px;
+  font-size: 85%;
+  opacity: 0.65;
 }
 
 .tutorial-content {
@@ -903,35 +948,47 @@ svg text {
 .tutorial-actions {
   display: flex;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 5px;
   align-items: center;
   gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .tutorial-page-counter {
-  flex: 1;
+  flex: 1 0 auto;
   text-align: center;
   font-size: 85%;
   opacity: 0.75;
+  white-space: nowrap;
 }
 
-.tutorial-next-button {
+.tutorial-next-button,
+.tutorial-menu-start-button {
+  flex: none;
   border: 1px solid rgba(127, 127, 127, 0.6);
   border-radius: 4px;
   padding: 3px 8px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-.tutorial-next-button:disabled {
+.tutorial-next-button:disabled,
+.tutorial-menu-start-button:disabled,
+.tutorial-menu-start-button-locked {
   cursor: default;
   opacity: 0.5;
 }
 
 .tutorial-previous-button {
+  flex: none;
   border: 1px solid rgba(127, 127, 127, 0.6);
   border-radius: 4px;
   padding: 3px 8px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .tutorial-previous-button:disabled {
