@@ -863,20 +863,28 @@ export class TutorialPalette {
                     new TutorialObjective("Supprimer la porte non", () => !this.hasPlacedGate("not")),
                 ]),
                 new TutorialStep([
-                    new TutorialParagraphBlock("Reconstruisez maintenant le circuit complet."),
-                    new TutorialParagraphBlock('Ajoutez une porte Non depuis la partie "Gates" de la barre de gauche, puis déplacez-la à droite de l’entrée A.'),
-                    new TutorialParagraphBlock('Ajoutez ensuite une sortie : le composant se nomme "out" et se trouve lui aussi dans la barre de gauche. Placez cette sortie à droite de la porte Non.'),
-                    new TutorialImageBlock("simulator/img/Output1.svg", "Symbole de sortie", "Sortie"),
-                    new TutorialParagraphBlock('Renommez la sortie en cliquant dessus avec deux doigts, puis en sélectionnant "Set Name...". Nommez cette sortie "Y".'),
-                    new TutorialParagraphBlock("Enfin, reliez l’entrée A à la porte Non, puis reliez la porte Non à la sortie Y (cliquez sur le point situé à droite de la porte Non et maintenez le clic pendant le déplacement pour créer le fil et l'amener jusqu’au point situé à gauche de la sortie Y)."),
+                    new TutorialParagraphBlock("Le simulateur propose plusieurs outils pour vous aider à dessiner des circuits logiques, trouvables dans la barre en haut du simulateur."),
+                    new TutorialParagraphBlock('"Undo/Redo" permet d’annuler la dernière action ou de rétablir une action qui vient d’être annulée.'),
+                    new TutorialParagraphBlock('"Design" permet de revenir au mode normal pour créer, déplacer et modifier les composants du circuit.'),
+                    new TutorialParagraphBlock('"Delete" permet de passer en mode suppression : cliquez ensuite sur un composant ou un fil pour le supprimer.'),
+                    new TutorialParagraphBlock('L’icône avec quatre flèches tout à droite permet de déplacer tout le circuit sur le canevas.'),
+                    new TutorialParagraphBlock('Le nombre à droite correspond au zoom : changez ce nombre pour agrandir ou réduire l’affichage du circuit.'),
+                    new TutorialParagraphBlock('Manipulez ces différents outils pour voir leurs effets, et utilisez "Undo" pour annuler la suppression de la porte non.'),
                 ], [
                     new TutorialObjective('Remettre une porte non', () => this.hasPlacedGate("not")),
-                    new TutorialObjective('Placer une sortie', () => this.hasPlacedComponent(ComponentTypeOutput)),
-                    new TutorialObjective('Renommer la sortie en "Y"', () => this.hasOutputNamed("Y")),
                     new TutorialObjective('Relier l’entrée A à la porte non', () => this.hasPlacedWireBetween(
                         { componentType: ComponentTypeInput },
                         { gateType: "not" },
                     )),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Ajoutez maintenant une sortie : le composant se nomme "out" et se trouve lui aussi dans la barre de gauche. Placez cette sortie à droite de la porte Non.'),
+                    new TutorialImageBlock("simulator/img/Output1.svg", "Symbole de sortie", "Sortie"),
+                    new TutorialParagraphBlock('Renommez la sortie en cliquant dessus avec deux doigts, puis en sélectionnant "Set Name...". Nommez cette sortie "Y".'),
+                    new TutorialParagraphBlock("Enfin, reliez la porte Non à la sortie Y (cliquez sur le point situé à droite de la porte Non et maintenez le clic pendant le déplacement pour créer le fil et l'amener jusqu’au point situé à gauche de la sortie Y)."),
+                ], [
+                    new TutorialObjective('Placer une sortie', () => this.hasPlacedComponent(ComponentTypeOutput)),
+                    new TutorialObjective('Renommer la sortie en "Y"', () => this.hasOutputNamed("Y")),
                     new TutorialObjective('Brancher un fil entre la porte non et la sortie', () => this.hasPlacedWireBetween(
                         { gateType: "not" },
                         { componentType: ComponentTypeOutput },
@@ -1030,7 +1038,7 @@ export class TutorialPalette {
         return new TutorialDefinition(
             "pixel",
             "Manipuler un pixel",
-            "Créez un pixel et contrôlez sa couleur avec trois entrées.",
+            "Créez un pixel et contrôlez sa couleur avec trois bits.",
             () => [
                 new TutorialStep([
                     new TutorialParagraphBlock("Vous allez manipuler un pixel à partir de trois entrées logiques, chacune représentant une composante de couleur."),
