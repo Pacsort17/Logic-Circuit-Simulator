@@ -794,10 +794,31 @@ svg text {
   right: 200px;
   display: flex;
   flex-direction: column;
-  max-width: 30%;
+  width: 30%;
+  min-width: 260px;
+  min-height: 180px;
+  max-width: 80%;
   max-height: 80%;
+  box-sizing: border-box;
   padding: 10px;
   z-index: 13;
+}
+
+.tutorial-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.tutorial-resize-handle-left {
+  left: -4px;
+}
+
+.tutorial-resize-handle-right {
+  right: -4px;
 }
 
 .tutorial-heading {
@@ -881,7 +902,7 @@ svg text {
 }
 
 .tutorial-paragraph {
-  max-width: 360px;
+  max-width: none;
 }
 
 .tutorial-image-block {
@@ -913,6 +934,7 @@ svg text {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   margin-bottom: 6px;
 }
 
@@ -942,7 +964,13 @@ svg text {
 }
 
 .tutorial-checklist-label {
-  line-height: 1.25;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 6px;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .tutorial-actions {

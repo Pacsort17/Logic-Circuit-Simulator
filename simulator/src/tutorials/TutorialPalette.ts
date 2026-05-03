@@ -7,7 +7,7 @@ import { Output } from "../components/Output"
 import { LogicEditor } from "../LogicEditor"
 import { button, cls, div, input, label, span, type } from "../htmlgen"
 import { ComponentTypeInput, ComponentTypeOutput, LogicValue, setVisible } from "../utils"
-import { TutorialContent, TutorialContentBlock, TutorialDoubleTruthTableBlock, TutorialImageBlock, TutorialParagraphBlock } from "./TutorialContent"
+import { TutorialContent, TutorialContentBlock, TutorialDoubleTruthTableBlock, TutorialImageBlock, TutorialParagraphBlock, TutorialTruthTableBlock } from "./TutorialContent"
 
 type TutorialComponentMatcher =
     | { componentType: string, name?: string }
@@ -86,6 +86,7 @@ export class TutorialPalette {
         this.tutorialDefinitions = [
             this.createInverterTutorial(),
             this.createCompoundLogicTutorial(),
+            this.createPixelTutorial(),
         ]
 
         this.nextButton = button(
@@ -118,10 +119,17 @@ export class TutorialPalette {
         ).render()
         heading.addEventListener("pointerdown", e => this.startDraggingPalette(e))
 
+        const leftResizeHandle = div(cls("tutorial-resize-handle tutorial-resize-handle-left")).render()
+        const rightResizeHandle = div(cls("tutorial-resize-handle tutorial-resize-handle-right")).render()
+        leftResizeHandle.addEventListener("pointerdown", e => this.startResizingPalette(e, "left"))
+        rightResizeHandle.addEventListener("pointerdown", e => this.startResizingPalette(e, "right"))
+
         this.rootElem = div(cls("tutorial-palette sim-toolbar-right"),
+            leftResizeHandle,
             heading,
             this.bodyElem,
             this.actionsElem,
+            rightResizeHandle,
         ).render()
 
         this.showTutorialMenu()
@@ -276,6 +284,62 @@ export class TutorialPalette {
         movePaletteTo(e.clientX, e.clientY)
     }
 
+    private startResizingPalette(e: PointerEvent, edge: "left" | "right") {
+        if (e.button !== 0) {
+            return
+        }
+
+        e.preventDefault()
+        e.stopPropagation()
+
+        const container = this.editor.html.canvasContainer
+        const containerRect = container.getBoundingClientRect()
+        const paletteRect = this.rootElem.getBoundingClientRect()
+        const minWidth = 260
+        const maxAllowedWidth = Math.max(minWidth, container.clientWidth * 0.8)
+        const startLeft = paletteRect.left - containerRect.left
+        const startTop = paletteRect.top - containerRect.top
+        const startRight = paletteRect.right - containerRect.left
+        const startWidth = paletteRect.width
+        const startX = e.clientX
+
+        this.rootElem.style.left = `${startLeft}px`
+        this.rootElem.style.top = `${startTop}px`
+        this.rootElem.style.right = "auto"
+        this.rootElem.style.height = ""
+
+        const resizePaletteTo = (clientX: number) => {
+            if (edge === "left") {
+                const minLeft = Math.max(0, startRight - maxAllowedWidth)
+                const maxLeft = Math.min(startRight - minWidth, container.clientWidth - minWidth)
+                const left = Math.min(Math.max(minLeft, startLeft + clientX - startX), maxLeft)
+
+                this.rootElem.style.left = `${left}px`
+                this.rootElem.style.width = `${startRight - left}px`
+                return
+            }
+
+            const maxWidth = Math.max(minWidth, Math.min(maxAllowedWidth, container.clientWidth - startLeft))
+            const width = Math.min(Math.max(minWidth, startWidth + clientX - startX), maxWidth)
+
+            this.rootElem.style.width = `${width}px`
+        }
+
+        const handlePointerMove = (moveEvent: PointerEvent) => {
+            resizePaletteTo(moveEvent.clientX)
+        }
+
+        const stopResizing = () => {
+            window.removeEventListener("pointermove", handlePointerMove)
+            window.removeEventListener("pointerup", stopResizing)
+            window.removeEventListener("pointercancel", stopResizing)
+        }
+
+        window.addEventListener("pointermove", handlePointerMove)
+        window.addEventListener("pointerup", stopResizing)
+        window.addEventListener("pointercancel", stopResizing)
+    }
+
     private updateDisplayedStep() {
         if (this.activeTutorial === undefined) {
             this.showTutorialMenu()
@@ -355,6 +419,7 @@ export class TutorialPalette {
             if (reason === "value") {
                 this.updateDynamicTruthTableHighlightedRow()
                 this.content.refresh()
+                this.refreshCompletionState()
                 return
             }
             this.resetTruthTableTest()
@@ -578,6 +643,12 @@ export class TutorialPalette {
         )
     }
 
+    private hasInputValue(name: string, value: LogicValue): boolean {
+        return this.placedComponents().some(comp =>
+            this.isInputComponent(comp) && comp.name === name && comp.value.length === 1 && comp.value[0] === value
+        )
+    }
+
     private hasOutputNamed(name: string): boolean {
         return this.placedComponents().some(comp =>
             this.isOutputComponent(comp) && comp.name === name
@@ -614,6 +685,53 @@ export class TutorialPalette {
             }
         }
         return false
+    }
+
+    private hasPlacedWireFromInputToComponentInput(inputName: string, componentType: string, inputNodeName: string): boolean {
+        for (const wire of this.editor.editorRoot.linkMgr.wires) {
+            const startComponent = wire.startNode.component
+            const endComponent = wire.endNode.component
+            const endNode = wire.endNode
+            if (
+                this.isInputComponent(startComponent)
+                && startComponent.name === inputName
+                && endComponent.def.type === componentType
+                && (endNode.idName === inputNodeName || endNode.group?.name === inputNodeName)
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private hasPlacedWireFromComponentToComponentInput(from: TutorialComponentMatcher, componentType: string, inputNodeName: string): boolean {
+        for (const wire of this.editor.editorRoot.linkMgr.wires) {
+            const startComponent = wire.startNode.component
+            const endComponent = wire.endNode.component
+            const endNode = wire.endNode
+            if (
+                this.matchesComponent(startComponent, from)
+                && endComponent.def.type === componentType
+                && (endNode.idName === inputNodeName || endNode.group?.name === inputNodeName)
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private hasGateWithIncomingWireCountFromInput(gateType: string, inputName: string, count: number): boolean {
+        return this.placedComponents().some(comp => {
+            if (!(comp instanceof GateBase) || comp.type !== gateType) {
+                return false
+            }
+            const incomingWires = comp.inputs._all.flatMap(input =>
+                input.incomingWire === null ? [] : [input.incomingWire]
+            )
+            return incomingWires.filter(wire =>
+                this.isInputComponent(wire.startNode.component) && wire.startNode.component.name === inputName
+            ).length >= count
+        })
     }
 
     private hasIncomingWiresFrom(component: Component, matchers: readonly TutorialComponentMatcher[], visitedComponents: Set<Component>): boolean {
@@ -890,6 +1008,122 @@ export class TutorialPalette {
             7,
             referenceTruthTableHeaders,
             referenceTruthTableRows,
+        )
+    }
+
+    private createPixelTutorial(): TutorialDefinition {
+        const pixelComponentType = "pixel"
+        const colorTruthTableHeaders: readonly string[] = ["A", "R", "G", "B"]
+        const colorTruthTableRows: DynamicTruthTableCell[][] = [
+            [0, 0, 0, 1],
+            [1, 1, 0, 0],
+        ]
+        const inputA: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "A" }
+        const notA: TutorialComponentMatcher = { gateType: "not", inputs: [inputA] }
+        const xorGate: TutorialComponentMatcher = { gateType: "xor" }
+
+        const hasInputConnectedToPixel = (inputName: string, pixelInputName: string) =>
+            this.hasPlacedWireFromInputToComponentInput(inputName, pixelComponentType, pixelInputName)
+        const hasComponentConnectedToPixel = (from: TutorialComponentMatcher, pixelInputName: string) =>
+            this.hasPlacedWireFromComponentToComponentInput(from, pixelComponentType, pixelInputName)
+
+        return new TutorialDefinition(
+            "pixel",
+            "Manipuler un pixel",
+            "Créez un pixel et contrôlez sa couleur avec trois entrées.",
+            () => [
+                new TutorialStep([
+                    new TutorialParagraphBlock("Vous allez manipuler un pixel à partir de trois entrées logiques, chacune représentant une composante de couleur."),
+                    new TutorialParagraphBlock("Un pixel coloré est composé de trois composantes : rouge, vert et bleu. On les note souvent R (red), G (green) et B (blue)."),
+                    new TutorialParagraphBlock("Chaque composante est représentée avec un bit : 1 pour allumer la couleur, 0 pour l’éteindre."),
+                    new TutorialParagraphBlock('Supprimez tous les composants présents avant de commencer.'),
+                ], [
+                    new TutorialObjective("Supprimer tous les composants présents", () => this.hasNoPlacedComponents()),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Dans la section "Inputs/Outputs" de la barre de gauche, cliquez sur "More" pour afficher les composants supplémentaires.'),
+                    new TutorialImageBlock("simulator/img/Pixel.svg", "Symbole du pixel", "Pixel"),
+                    new TutorialParagraphBlock('Cliquez ensuite sur le composant "Pixel" pour l’ajouter.'),
+                ], [
+                    new TutorialObjective("Créer le composant Pixel", () => this.hasPlacedComponent(pixelComponentType)),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Créez trois entrées, et nommez-les "R", "G" et "B".'),
+                    new TutorialParagraphBlock("Reliez R à l’entrée en haut du pixel, G à l’entrée à gauche, et B à l’entrée en bas."),
+                ], [
+                    new TutorialObjective('Créer l’entrée "R"', () => this.hasInputNamed("R")),
+                    new TutorialObjective('Créer l’entrée "G"', () => this.hasInputNamed("G")),
+                    new TutorialObjective('Créer l’entrée "B"', () => this.hasInputNamed("B")),
+                    new TutorialObjective("Relier R à l’entrée en haut du pixel", () => hasInputConnectedToPixel("R", "R")),
+                    new TutorialObjective("Relier G à l’entrée à gauche du pixel", () => hasInputConnectedToPixel("G", "G")),
+                    new TutorialObjective("Relier B à l’entrée en bas du pixel", () => hasInputConnectedToPixel("B", "B")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Manipulez maintenant les valeurs des entrées en cliquant dessus, pour changer la couleur du pixel."),
+                    new TutorialParagraphBlock("Faites en sorte que le pixel soit jaune."),
+                ], [
+                    new TutorialObjective("Le pixel est jaune", () =>
+                        hasInputConnectedToPixel("R", "R")
+                        && hasInputConnectedToPixel("G", "G")
+                        && hasInputConnectedToPixel("B", "B")
+                        && this.hasInputValue("R", true)
+                        && this.hasInputValue("G", true)
+                        && this.hasInputValue("B", false)
+                    ),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Vous allez maintenant créer un circuit logique qui prend en entrée un bit."),
+                    new TutorialParagraphBlock("Si ce bit vaut 0, alors le pixel doit être bleu. Si ce bit vaut 1, alors le pixel doit être rouge."),
+                    new TutorialParagraphBlock('Pour repartir proprement, supprimez les trois entrées "R", "G" et "B", mais gardez le pixel.'),
+                ], [
+                    new TutorialObjective('Supprimer les entrées "R", "G" et "B"', () => !this.hasInputNamed("R") && !this.hasInputNamed("G") && !this.hasInputNamed("B")),
+                    new TutorialObjective("Garder le composant Pixel", () => this.hasPlacedComponent(pixelComponentType)),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Voici ce que doit faire le circuit : si A = 0, le pixel est bleu; si A = 1, le pixel est rouge."),
+                    new TutorialTruthTableBlock(colorTruthTableHeaders, () => colorTruthTableRows),
+                    new TutorialParagraphBlock("La table utilise une entrée A et trois sorties R, G et B, qui correspondent aux trois composantes du pixel."),
+                    new TutorialParagraphBlock("On peut tirer plusieurs fils depuis une même entrée : l’entrée A pourra donc servir à plusieurs endroits du circuit."),
+                    new TutorialParagraphBlock('Créez maintenant une entrée et nommez-la "A".'),
+                ], [
+                    new TutorialObjective('Créer l’entrée "A"', () => this.hasInputNamed("A")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Commençons par la composante rouge."),
+                    new TutorialTruthTableBlock(colorTruthTableHeaders, () => colorTruthTableRows),
+                    new TutorialParagraphBlock("La colonne R est exactement la même que la colonne A."),
+                    new TutorialParagraphBlock("Il suffit donc de relier directement A à la composante rouge du pixel, c'est-à-dire l'entrée en haut du pixel."),
+                ], [
+                    new TutorialObjective("Relier A à la composante rouge du pixel", () => hasInputConnectedToPixel("A", "R")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Passons à la composante bleue."),
+                    new TutorialTruthTableBlock(colorTruthTableHeaders, () => colorTruthTableRows),
+                    new TutorialParagraphBlock("La composante bleue correspond à la fonction logique B = A̅."),
+                    new TutorialParagraphBlock("Ajoutez une porte Non, reliez l'entrée A à cette porte (vous pouvez créer plusieurs fils depuis une même entrée), puis reliez la sortie de la porte Non à la composante bleue du pixel, c'est-à-dire l'entrée en bas du pixel."),
+                ], [
+                    new TutorialObjective("Placer une porte non", () => this.hasPlacedGate("not")),
+                    new TutorialObjective("Relier l'entrée A à la porte non", () => this.hasPlacedComponentMatching(notA)),
+                    new TutorialObjective("Relier la porte Non à la composante bleue du pixel", () => hasComponentConnectedToPixel(notA, "B")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Finissons par la composante verte."),
+                    new TutorialTruthTableBlock(colorTruthTableHeaders, () => colorTruthTableRows),
+                    new TutorialParagraphBlock("Quelle que soit la valeur de A, la variable G vaut toujours 0."),
+                    new TutorialParagraphBlock("Pour obtenir ce 0, vous pouvez utiliser une porte Xor."),
+                    new TutorialImageBlock("simulator/img/xor.svg", "Porte logique XOR", "Porte xor"),
+                    new TutorialParagraphBlock("Si les deux entrées d’une porte Xor ont la même valeur, son résultat vaut 0."),
+                    new TutorialParagraphBlock("Reliez donc l’entrée A aux deux entrées de la porte Xor : vous obtiendrez 0, que A vaille 0 ou 1. Reliez ensuite la sortie de cette porte à l’entrée gauche du pixel."),
+                    new TutorialParagraphBlock("Pour améliorer la lisibilité de votre circuit, vous pouvez déplacer les fils : cliquez sur le fil, et maintenez le clic en déplaçant le fil."),
+                ], [
+                    new TutorialObjective("Poser une porte Xor", () => this.hasPlacedGate("xor")),
+                    new TutorialObjective("Relier A aux deux entrées de la porte Xor", () => this.hasGateWithIncomingWireCountFromInput("xor", "A", 2)),
+                    new TutorialObjective("Relier la porte Xor à la composante verte du pixel", () => hasComponentConnectedToPixel(xorGate, "G")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Bien joué, vous avez créé votre premier circuit logique avec plusieurs sorties !"),
+                ], []),
+            ],
         )
     }
 }

@@ -29,7 +29,7 @@ export const PixelDef =
             isGray: gray,
         }),
         size: ({ numBits }) => {
-            const size = useCompact(numBits) ? numBits : 2 * numBits
+            const size = useCompact(numBits) ? numBits : (numBits === 1 ? 4 : 2 * numBits)
             return {
                 gridWidth: size,
                 gridHeight: size,
