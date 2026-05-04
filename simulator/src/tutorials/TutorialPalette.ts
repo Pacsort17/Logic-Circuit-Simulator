@@ -7,7 +7,7 @@ import { Output } from "../components/Output"
 import { LogicEditor } from "../LogicEditor"
 import { button, cls, div, input, label, span, type } from "../htmlgen"
 import { ComponentTypeInput, ComponentTypeOutput, LogicValue, setVisible } from "../utils"
-import { TutorialContent, TutorialContentBlock, TutorialDoubleTruthTableBlock, TutorialImageBlock, TutorialParagraphBlock, TutorialTruthTableBlock } from "./TutorialContent"
+import { TutorialContent, TutorialContentBlock, TutorialDoubleTruthTableBlock, TutorialHintBlock, TutorialImageBlock, TutorialParagraphBlock, TutorialTruthTableBlock } from "./TutorialContent"
 
 type TutorialComponentMatcher =
     | { componentType: string, name?: string }
@@ -62,6 +62,7 @@ export class TutorialPalette {
     private readonly manuallyUnlockedTutorialIds = new Set<string>()
     private truthTableTestState: TruthTableTestState = "unknown"
     private truthTableTestIsRunning = false
+    private truthTableTestRerunRequested = false
     private truthTableTestRunId = 0
     private dynamicTruthTableHeaders: readonly string[] = ["A", "Y = A̅"]
     private referenceTruthTableHeaders: readonly string[] = ["A", "Y = A̅"]
@@ -87,6 +88,8 @@ export class TutorialPalette {
             this.createInverterTutorial(),
             this.createCompoundLogicTutorial(),
             this.createPixelTutorial(),
+            this.createTwoBitPixelTutorial(),
+            this.createThreeBitPixelChallengeTutorial(),
         ]
 
         this.nextButton = button(
@@ -486,10 +489,29 @@ export class TutorialPalette {
 
     private scheduleTruthTableTestIfNeeded() {
         if (
-            this.activeTutorial?.truthTableStepIndex !== this.currentStep
+            !this.isCurrentStepTruthTableStep()
             || this.truthTableTestState !== "unknown"
-            || this.truthTableTestIsRunning
         ) {
+            return
+        }
+        if (this.truthTableTestIsRunning) {
+            this.truthTableTestRerunRequested = true
+            return
+        }
+        this.runTruthTableTest()
+    }
+
+    private isCurrentStepTruthTableStep(): boolean {
+        if (this.activeTutorial?.truthTableStepIndex === this.currentStep) {
+            return true
+        }
+        return this.steps[this.currentStep]?.content.some(block => block.type === "doubleTruthTable") ?? false
+    }
+
+    private regenerateSimulationTruthTable() {
+        this.resetTruthTableTest()
+        if (this.truthTableTestIsRunning) {
+            this.truthTableTestRerunRequested = true
             return
         }
         this.runTruthTableTest()
@@ -499,6 +521,7 @@ export class TutorialPalette {
         const runId = ++this.truthTableTestRunId
         this.truthTableTestState = "running"
         this.truthTableTestIsRunning = true
+        this.truthTableTestRerunRequested = false
 
         try {
             await this.rebuildDynamicTruthTable(runId)
@@ -510,7 +533,9 @@ export class TutorialPalette {
             this.refreshCompletionState()
         } finally {
             this.truthTableTestIsRunning = false
-            if (runId !== this.truthTableTestRunId) {
+            if (this.truthTableTestRerunRequested) {
+                this.runTruthTableTest()
+            } else if (runId !== this.truthTableTestRunId) {
                 this.refreshCompletionState()
             }
         }
@@ -519,10 +544,10 @@ export class TutorialPalette {
     private async rebuildDynamicTruthTable(runId: number) {
         const inputs = this.placedComponents()
             .filter(comp => this.isInputComponent(comp))
-            .sort((a, b) => this.componentDisplayName(a).localeCompare(this.componentDisplayName(b)))
+            .sort((a, b) => this.compareTruthTableComponentOrder(a, b))
         const outputs = this.placedComponents()
             .filter(comp => this.isOutputComponent(comp))
-            .sort((a, b) => this.componentDisplayName(a).localeCompare(this.componentDisplayName(b)))
+            .sort((a, b) => this.compareTruthTableComponentOrder(a, b))
 
         const inputBits = inputs.flatMap(input =>
             input.value.map((__, bitIndex) => ({ input, bitIndex }))
@@ -550,9 +575,7 @@ export class TutorialPalette {
                 restoreAfter.set(input, input.value)
             }
 
-            const oldPropagationDelay = this.editor.options.propagationDelay
-            this.editor.setPartialOptions({ ...this.editor.options, propagationDelay: 0 })
-            try {
+            return await this.editor.withTemporaryPropagationDelay(0, async () => {
                 const nextDynamicRows: DynamicTruthTableCell[][] = []
                 const numRows = 2 ** inputBits.length
                 for (let rowIndex = 0; rowIndex < numRows; rowIndex++) {
@@ -583,9 +606,7 @@ export class TutorialPalette {
                 }
 
                 return nextDynamicRows
-            } finally {
-                this.editor.setPartialOptions({ ...this.editor.options, propagationDelay: oldPropagationDelay })
-            }
+            })
         })
 
         if (runId !== this.truthTableTestRunId || tables === undefined) {
@@ -720,6 +741,20 @@ export class TutorialPalette {
         return false
     }
 
+    private hasPlacedWireToComponentInput(componentType: string, inputNodeName: string): boolean {
+        for (const wire of this.editor.editorRoot.linkMgr.wires) {
+            const endComponent = wire.endNode.component
+            const endNode = wire.endNode
+            if (
+                endComponent.def.type === componentType
+                && (endNode.idName === inputNodeName || endNode.group?.name === inputNodeName)
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
     private hasGateWithIncomingWireCountFromInput(gateType: string, inputName: string, count: number): boolean {
         return this.placedComponents().some(comp => {
             if (!(comp instanceof GateBase) || comp.type !== gateType) {
@@ -771,6 +806,23 @@ export class TutorialPalette {
         return typeof component.name === "string" && component.name.length > 0
             ? component.name
             : component.ref ?? "?"
+    }
+
+    private compareTruthTableComponentOrder(a: Input | Output, b: Input | Output): number {
+        const nameA = this.componentDisplayName(a)
+        const nameB = this.componentDisplayName(b)
+        const referenceIndexA = this.referenceTruthTableHeaders.indexOf(nameA)
+        const referenceIndexB = this.referenceTruthTableHeaders.indexOf(nameB)
+        if (referenceIndexA !== -1 && referenceIndexB !== -1) {
+            return referenceIndexA - referenceIndexB
+        }
+        if (referenceIndexA !== -1) {
+            return -1
+        }
+        if (referenceIndexB !== -1) {
+            return 1
+        }
+        return nameA.localeCompare(nameB)
     }
 
     private placedComponents(): Component[] {
@@ -898,12 +950,13 @@ export class TutorialPalette {
                         referenceTruthTableHeaders,
                         () => referenceTruthTableRows,
                         () => this.dynamicTruthTableHighlightedRowIndex,
+                        () => this.regenerateSimulationTruthTable(),
                     ),
-                    new TutorialParagraphBlock("La table de gauche correspond à la simulation de votre circuit : elle est calculée automatiquement à partir des composants et des fils que vous avez placés."),
+                    new TutorialParagraphBlock("La table de gauche correspond à la simulation de votre circuit : elle est calculée à partir des composants et des fils que vous avez placés. La table de vérité se met à jour dès que vous modifiez votre circuit."),
                     new TutorialParagraphBlock("La table de droite est la table de référence : c’est le résultat qui doit être obtenu pour la fonction Y = A̅."),
                     new TutorialParagraphBlock("Pour tester le circuit, cliquez sur l’entrée A afin de changer sa valeur. La ligne jaune indique le cas actuellement présent sur le circuit."),
                 ], [
-                    new TutorialObjective("Comparer le circuit avec la table de vérité", () => this.hasValidTruthTable()),
+                    new TutorialObjective("Les deux tables de vérité sont identiques", () => this.hasValidTruthTable()),
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock("Bien joué, vous avez terminé le tutoriel !"),
@@ -1005,12 +1058,13 @@ export class TutorialPalette {
                         referenceTruthTableHeaders,
                         () => referenceTruthTableRows,
                         () => this.dynamicTruthTableHighlightedRowIndex,
+                        () => this.regenerateSimulationTruthTable(),
                     ),
                     new TutorialParagraphBlock("La table de gauche est calculée par la simulation de votre circuit."),
                     new TutorialParagraphBlock("La table de droite est la référence attendue pour Y = A̅ ou (B et C̅)."),
                     new TutorialParagraphBlock("Si les deux tables sont identiques, votre circuit est correct."),
                 ], [
-                    new TutorialObjective("Comparer les deux tables de vérité", () => this.hasValidTruthTable()),
+                    new TutorialObjective("Les deux tables de vérité sont identiques", () => this.hasValidTruthTable()),
                 ]),
             ],
             7,
@@ -1021,13 +1075,13 @@ export class TutorialPalette {
 
     private createPixelTutorial(): TutorialDefinition {
         const pixelComponentType = "pixel"
-        const colorTruthTableHeaders: readonly string[] = ["A", "R", "G", "B"]
+        const colorTruthTableHeaders: readonly string[] = ["X", "R", "G", "B"]
         const colorTruthTableRows: DynamicTruthTableCell[][] = [
             [0, 0, 0, 1],
             [1, 1, 0, 0],
         ]
-        const inputA: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "A" }
-        const notA: TutorialComponentMatcher = { gateType: "not", inputs: [inputA] }
+        const inputX: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "X" }
+        const notX: TutorialComponentMatcher = { gateType: "not", inputs: [inputX] }
         const xorGate: TutorialComponentMatcher = { gateType: "xor" }
 
         const hasInputConnectedToPixel = (inputName: string, pixelInputName: string) =>
@@ -1088,31 +1142,31 @@ export class TutorialPalette {
                     new TutorialObjective("Garder le composant Pixel", () => this.hasPlacedComponent(pixelComponentType)),
                 ]),
                 new TutorialStep([
-                    new TutorialParagraphBlock("Voici ce que doit faire le circuit : si A = 0, le pixel est bleu; si A = 1, le pixel est rouge."),
+                    new TutorialParagraphBlock("Voici ce que doit faire le circuit : si X = 0, le pixel est bleu; si X = 1, le pixel est rouge."),
                     new TutorialTruthTableBlock(colorTruthTableHeaders, () => colorTruthTableRows),
-                    new TutorialParagraphBlock("La table utilise une entrée A et trois sorties R, G et B, qui correspondent aux trois composantes du pixel."),
-                    new TutorialParagraphBlock("On peut tirer plusieurs fils depuis une même entrée : l’entrée A pourra donc servir à plusieurs endroits du circuit."),
+                    new TutorialParagraphBlock("La table utilise une entrée X et trois sorties R, G et B, qui correspondent aux trois composantes du pixel."),
+                    new TutorialParagraphBlock("On peut tirer plusieurs fils depuis une même entrée : l’entrée X pourra donc servir à plusieurs endroits du circuit."),
                     new TutorialParagraphBlock('Créez maintenant une entrée et nommez-la "A".'),
                 ], [
-                    new TutorialObjective('Créer l’entrée "A"', () => this.hasInputNamed("A")),
+                    new TutorialObjective('Créer l’entrée "X"', () => this.hasInputNamed("A")),
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock("Commençons par la composante rouge."),
                     new TutorialTruthTableBlock(colorTruthTableHeaders, () => colorTruthTableRows),
                     new TutorialParagraphBlock("La colonne R est exactement la même que la colonne A."),
-                    new TutorialParagraphBlock("Il suffit donc de relier directement A à la composante rouge du pixel, c'est-à-dire l'entrée en haut du pixel."),
+                    new TutorialParagraphBlock("Il suffit donc de relier directement X à la composante rouge du pixel, c'est-à-dire l'entrée en haut du pixel."),
                 ], [
-                    new TutorialObjective("Relier A à la composante rouge du pixel", () => hasInputConnectedToPixel("A", "R")),
+                    new TutorialObjective("Relier X à la composante rouge du pixel", () => hasInputConnectedToPixel("A", "R")),
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock("Passons à la composante bleue."),
                     new TutorialTruthTableBlock(colorTruthTableHeaders, () => colorTruthTableRows),
-                    new TutorialParagraphBlock("La composante bleue correspond à la fonction logique B = A̅."),
-                    new TutorialParagraphBlock("Ajoutez une porte Non, reliez l'entrée A à cette porte (vous pouvez créer plusieurs fils depuis une même entrée), puis reliez la sortie de la porte Non à la composante bleue du pixel, c'est-à-dire l'entrée en bas du pixel."),
+                    new TutorialParagraphBlock("La composante bleue correspond à la fonction logique B = X̅."),
+                    new TutorialParagraphBlock("Ajoutez une porte Non, reliez l'entrée X à cette porte (vous pouvez créer plusieurs fils depuis une même entrée), puis reliez la sortie de la porte Non à la composante bleue du pixel, c'est-à-dire l'entrée en bas du pixel."),
                 ], [
                     new TutorialObjective("Placer une porte non", () => this.hasPlacedGate("not")),
-                    new TutorialObjective("Relier l'entrée A à la porte non", () => this.hasPlacedComponentMatching(notA)),
-                    new TutorialObjective("Relier la porte Non à la composante bleue du pixel", () => hasComponentConnectedToPixel(notA, "B")),
+                    new TutorialObjective("Relier l'entrée X à la porte non", () => this.hasPlacedComponentMatching(notX)),
+                    new TutorialObjective("Relier la porte Non à la composante bleue du pixel", () => hasComponentConnectedToPixel(notX, "B")),
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock("Finissons par la composante verte."),
@@ -1121,17 +1175,189 @@ export class TutorialPalette {
                     new TutorialParagraphBlock("Pour obtenir ce 0, vous pouvez utiliser une porte Xor."),
                     new TutorialImageBlock("simulator/img/xor.svg", "Porte logique XOR", "Porte xor"),
                     new TutorialParagraphBlock("Si les deux entrées d’une porte Xor ont la même valeur, son résultat vaut 0."),
-                    new TutorialParagraphBlock("Reliez donc l’entrée A aux deux entrées de la porte Xor : vous obtiendrez 0, que A vaille 0 ou 1. Reliez ensuite la sortie de cette porte à l’entrée gauche du pixel."),
+                    new TutorialParagraphBlock("Reliez donc l’entrée X aux deux entrées de la porte Xor : vous obtiendrez 0, que X vaille 0 ou 1. Reliez ensuite la sortie de cette porte à l’entrée gauche du pixel."),
                     new TutorialParagraphBlock("Pour améliorer la lisibilité de votre circuit, vous pouvez déplacer les fils : cliquez sur le fil, et maintenez le clic en déplaçant le fil."),
                 ], [
                     new TutorialObjective("Poser une porte Xor", () => this.hasPlacedGate("xor")),
-                    new TutorialObjective("Relier A aux deux entrées de la porte Xor", () => this.hasGateWithIncomingWireCountFromInput("xor", "A", 2)),
+                    new TutorialObjective("Relier X aux deux entrées de la porte Xor", () => this.hasGateWithIncomingWireCountFromInput("xor", "A", 2)),
                     new TutorialObjective("Relier la porte Xor à la composante verte du pixel", () => hasComponentConnectedToPixel(xorGate, "G")),
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock("Bien joué, vous avez créé votre premier circuit logique avec plusieurs sorties !"),
                 ], []),
             ],
+        )
+    }
+
+    private createTwoBitPixelTutorial(): TutorialDefinition {
+        const pixelComponentType = "pixel"
+        const referenceTruthTableHeaders: readonly string[] = ["X", "Z", "R", "G", "B"]
+        const referenceTruthTableRows: DynamicTruthTableCell[][] = [
+            [0, 0, 0, 0, 1],
+            [0, 1, 0, 0, 0],
+            [1, 0, 0, 1, 0],
+            [1, 1, 1, 0, 1],
+        ]
+
+        const hasOnlyStartingComponents = () =>
+            this.placedComponents().length === 2
+            && this.hasInputNamed("X")
+            && this.hasInputNamed("Z")
+
+        return new TutorialDefinition(
+            "two-bit-pixel-color",
+            "Contrôler un pixel avec 2 bits",
+            "Concevez un circuit qui transforme deux bits en couleur.",
+            () => [
+                new TutorialStep([
+                    new TutorialParagraphBlock("Vous allez maintenant contrôler la couleur d’un pixel avec deux bits d’entrée."),
+                    new TutorialParagraphBlock('Créez deux entrées "X" et "Z". Supprimez tous les autres composants avant de continuer.'),
+                ], [
+                    new TutorialObjective('Créer l’entrée "X"', () => this.hasInputNamed("X")),
+                    new TutorialObjective('Créer l’entrée "Z"', () => this.hasInputNamed("Z")),
+                    new TutorialObjective("Supprimer tout autre composant", hasOnlyStartingComponents),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("On veut associer une couleur à chaque combinaison des deux bits X et Z :"),
+                    new TutorialParagraphBlock(" - X = 0, Z = 0 → Bleu"),
+                    new TutorialParagraphBlock(" - X = 0, Z = 1 → Noir"),
+                    new TutorialParagraphBlock(" - X = 1, Z = 0 → Vert"),
+                    new TutorialParagraphBlock(" - X = 1, Z = 1 → Magenta"),
+                    new TutorialParagraphBlock('Avant de commencer la construction du circuit, ajoutez trois sorties nommées "R", "G" et "B". Vous utiliserez ces sorties pour créer le cricuit, et vous pourrez les remplacer par le composant pixel après:'),
+                ], [
+                    new TutorialObjective('Créer la sortie "R"', () => this.hasOutputNamed("R")),
+                    new TutorialObjective('Créer la sortie "G"', () => this.hasOutputNamed("G")),
+                    new TutorialObjective('Créer la sortie "B"', () => this.hasOutputNamed("B")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Voici ce que ça donne en table de vérité : les colonnes R, G et B indiquent quelles composantes du pixel doivent être allumées."),
+                    new TutorialDoubleTruthTableBlock(
+                        () => this.dynamicTruthTableHeaders,
+                        () => this.dynamicTruthTableRows,
+                        referenceTruthTableHeaders,
+                        () => referenceTruthTableRows,
+                        () => this.dynamicTruthTableHighlightedRowIndex,
+                        () => this.regenerateSimulationTruthTable(),
+                    ),
+                    new TutorialParagraphBlock("La sortie R correspond à la fonction R = X et Z. Retrouvez les deux autres fonctions, puis construisez le circuit correspondant."),
+                    new TutorialParagraphBlock("Aidez-vous de la table de vérité correspondant à la simulation : elle se met à jour dès que vous modifiez votre circuit."),
+                ], [
+                    new TutorialObjective("Les deux tables de vérité sont identiques", () => this.hasValidTruthTable()),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock('Ajoutez un composant Pixel, puis reliez les fils correspondants aux sorties R, G et B du circuit aux entrées R, G et B du pixel.'),
+                ], [
+                    new TutorialObjective("Placer un composant Pixel", () => this.hasPlacedComponent(pixelComponentType)),
+                    new TutorialObjective("Relier l'entrée rouge du pixel", () => this.hasPlacedWireToComponentInput(pixelComponentType, "R")),
+                    new TutorialObjective("Relier l'entrée verte du pixel", () => this.hasPlacedWireToComponentInput(pixelComponentType, "G")),
+                    new TutorialObjective("Relier l'entrée bleue du pixel", () => this.hasPlacedWireToComponentInput(pixelComponentType, "B")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Bien joué, vous venez d’apprendre à concevoir un circuit logique pour implémenter une fonctionnalité."),
+                    new TutorialParagraphBlock("Ici, vous avez obtenu une couleur à partir d’un nombre encodé sur deux bits."),
+                ], []),
+           
+            ],
+            2,
+            referenceTruthTableHeaders,
+            referenceTruthTableRows,
+        )
+    }
+
+    private createThreeBitPixelChallengeTutorial(): TutorialDefinition {
+        const pixelComponentType = "pixel"
+        const referenceTruthTableHeaders: readonly string[] = ["W", "X", "Z", "R", "G", "B"]
+        const referenceTruthTableRows: DynamicTruthTableCell[][] = [
+            [0, 0, 0, 1, 0, 1],
+            [0, 0, 1, 1, 0, 0],
+            [0, 1, 0, 0, 0, 0],
+            [0, 1, 1, 0, 1, 1],
+            [1, 0, 0, 0, 0, 1],
+            [1, 0, 1, 0, 1, 0],
+            [1, 1, 0, 1, 1, 1],
+            [1, 1, 1, 1, 1, 0],
+        ]
+
+        const hasNoExtraChallengeComponents = () => {
+            const components = this.placedComponents()
+            const inputs = components.filter(comp => this.isInputComponent(comp))
+            const outputs = components.filter(comp => this.isOutputComponent(comp))
+            const allowedInputs = ["W", "X", "Z"]
+            const allowedOutputs = ["R", "G", "B"]
+            const hasNoDuplicateNames = (names: Array<string | undefined>) => new Set(names).size === names.length
+            const componentName = (component: Input | Output) =>
+                typeof component.name === "string" ? component.name : undefined
+
+            return inputs.length + outputs.length === components.length
+                && inputs.every(input => allowedInputs.includes(componentName(input) ?? ""))
+                && outputs.every(output => allowedOutputs.includes(componentName(output) ?? ""))
+                && hasNoDuplicateNames(inputs.map(componentName))
+                && hasNoDuplicateNames(outputs.map(componentName))
+        }
+
+        return new TutorialDefinition(
+            "three-bit-pixel-color-challenge",
+            "Défi : Conception d'un circuit logique",
+            "Concevez par vous même un circuit qui transforme un nombre binaire en couleur.",
+            () => [
+                new TutorialStep([
+                    new TutorialParagraphBlock("Bienvenue dans le dernier tutoriel : il est plus difficile que les précédents, maintenant que vous savez bien dessiner des circuits logiques."),
+                    new TutorialParagraphBlock("Vous allez concevoir votre propre système qui, à partir d'un nombre (encodé en binaire), colorie un pixel dans une certaine couleur."),
+                    new TutorialParagraphBlock('Cliquez sur "Suivant" pour commencer le défi.'),
+                ], []),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Voici la correspondance que vous devez implémenter :"),
+                    new TutorialParagraphBlock(" - 0 (000) -> Magenta"),
+                    new TutorialParagraphBlock(" - 1 (001) -> Rouge"),
+                    new TutorialParagraphBlock(" - 2 (010) -> Noir"),
+                    new TutorialParagraphBlock(" - 3 (011) -> Cyan"),
+                    new TutorialParagraphBlock(" - 4 (100) -> Bleu"),
+                    new TutorialParagraphBlock(" - 5 (101) -> Vert"),
+                    new TutorialParagraphBlock(" - 6 (111) -> Blanc"),
+                    new TutorialParagraphBlock(" - 7 (110) -> Jaune"),
+                    new TutorialParagraphBlock("La table de vérité est donc composée detrois entrées (W, X et Z) et de trois sorties (R, G et B)."),
+                    new TutorialTruthTableBlock(referenceTruthTableHeaders, () => referenceTruthTableRows),
+                    new TutorialParagraphBlock('Créez maintenant trois entrées nommées "W", "X" et "Z", puis trois sorties nommées "R", "G" et "B". Supprimez tout autre composant avant de continuer.'),
+                ], [
+                    new TutorialObjective('Créer l’entrée "W"', () => this.hasInputNamed("W")),
+                    new TutorialObjective('Créer l’entrée "X"', () => this.hasInputNamed("X")),
+                    new TutorialObjective('Créer l’entrée "Z"', () => this.hasInputNamed("Z")),
+                    new TutorialObjective('Créer la sortie "R"', () => this.hasOutputNamed("R")),
+                    new TutorialObjective('Créer la sortie "G"', () => this.hasOutputNamed("G")),
+                    new TutorialObjective('Créer la sortie "B"', () => this.hasOutputNamed("B")),
+                    new TutorialObjective("Supprimer tout autre composant", hasNoExtraChallengeComponents),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Retrouvez les fonctions logiques correspondant à R, G et B, puis construisez le circuit."),
+                    new TutorialDoubleTruthTableBlock(
+                        () => this.dynamicTruthTableHeaders,
+                        () => this.dynamicTruthTableRows,
+                        referenceTruthTableHeaders,
+                        () => referenceTruthTableRows,
+                        () => this.dynamicTruthTableHighlightedRowIndex,
+                        () => this.regenerateSimulationTruthTable(),
+                    ),
+                    new TutorialParagraphBlock("Aidez-vous de la table simulée : elle se met à jour dès que vous modifiez votre circuit."),
+                    new TutorialHintBlock("Quand un problème semble complexe, séparez-le en sous-problèmes plus simples. Séparez la table de vérité en deux : une table de vérité quand W = 0 (qui vous donne fonction logique K), et une table de vérité quand W = 1 (qui vous donne fonction logique L). Puis ensuite, combinez les deux fonctions logiques : (W = 0 et K) ou (W = 1 et L) ⟶ (W̅ et K) ou (W et L)"),
+                ], [
+                    new TutorialObjective("Les deux tables de vérité sont identiques", () => this.hasValidTruthTable()),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Ajoutez un composant Pixel, puis reliez les sorties R, G et B du circuit aux entrées R, G et B du pixel."),
+                    new TutorialParagraphBlock("Vérifiez ensuite que le pixel prend la bonne couleur pour chaque combinaison des entrées W, X et Z."),
+                ], [
+                    new TutorialObjective("Placer un composant Pixel", () => this.hasPlacedComponent(pixelComponentType)),
+                    new TutorialObjective("Relier l'entrée rouge du pixel", () => this.hasPlacedWireToComponentInput(pixelComponentType, "R")),
+                    new TutorialObjective("Relier l'entrée verte du pixel", () => this.hasPlacedWireToComponentInput(pixelComponentType, "G")),
+                    new TutorialObjective("Relier l'entrée bleue du pixel", () => this.hasPlacedWireToComponentInput(pixelComponentType, "B")),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Bien joué, vous avez terminé le défi, plus rien ne peut vous arrêter maintenant !"),
+                ], []),
+            ],
+            2,
+            referenceTruthTableHeaders,
+            referenceTruthTableRows,
         )
     }
 }

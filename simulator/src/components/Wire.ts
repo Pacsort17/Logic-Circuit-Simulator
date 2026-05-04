@@ -411,7 +411,7 @@ export class Wire extends Drawable {
         if (this._propagatingValues[this._propagatingValues.length - 1][0] !== newValue) {
             this._propagatingValues.push([newValue, logicalTime])
         }
-        const propagationDelay = this.customPropagationDelay ?? this.parent.editor.options.propagationDelay
+        const propagationDelay = this.customPropagationDelay ?? this.parent.editor.propagationDelay
         if (propagationDelay === 0) {
             this.endNode.value = newValue
             // remove all but the last value
@@ -544,7 +544,7 @@ export class Wire extends Drawable {
         const isAnimating = this._propagatingValues.length > 1
 
         const options = this.parent.editor.options
-        const propagationDelay = this.customPropagationDelay ?? options.propagationDelay
+        const propagationDelay = this.customPropagationDelay ?? this.parent.editor.propagationDelay
         const neutral = options.hideWireColors
         const drawTime = ctx.drawParams.drawTime
         this.prunePropagatingValues(drawTime, propagationDelay)

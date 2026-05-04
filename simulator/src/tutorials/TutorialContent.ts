@@ -1,5 +1,6 @@
 import { LogicEditor } from "../LogicEditor"
-import { Modifier, applyModifierTo, attr, cls, div, img, table, tbody, td, th, thead, tr } from "../htmlgen"
+import { Modifier, applyModifierTo, attr, button, cls, div, img, table, tbody, td, th, thead, tr, type } from "../htmlgen"
+import { setVisible } from "../utils"
 
 type TutorialTruthTableCell = string | number | boolean | null | undefined
 
@@ -7,6 +8,7 @@ export type TutorialContentBlock =
     | TutorialParagraphBlock
     | TutorialImageBlock
     | TutorialCustomBlock
+    | TutorialHintBlock
     | TutorialTruthTableBlock
     | TutorialDoubleTruthTableBlock
 
@@ -36,6 +38,14 @@ export class TutorialCustomBlock {
     ) { }
 }
 
+export class TutorialHintBlock {
+    public readonly type = "hint"
+
+    public constructor(
+        public readonly text: string,
+    ) { }
+}
+
 export class TutorialTruthTableBlock {
     public readonly type = "truthTable"
 
@@ -54,6 +64,7 @@ export class TutorialDoubleTruthTableBlock {
         public readonly referenceHeaders: readonly string[] | (() => readonly string[]),
         public readonly referenceRows: () => TutorialTruthTableCell[][],
         public readonly dynamicHighlightedRowIndex?: () => number | undefined,
+        public readonly regenerateSimulationTruthTable?: () => void,
     ) { }
 }
 
@@ -103,6 +114,26 @@ export class TutorialContent {
                 return wrapper
             }
 
+            case "hint": {
+                const hintText = div(cls("tutorial-hint-text"), block.text).render()
+                const revealButton = button(
+                    type("button"),
+                    cls("tutorial-hint-button"),
+                    "Indice",
+                ).render()
+
+                setVisible(hintText, false)
+                revealButton.addEventListener("click", () => {
+                    setVisible(revealButton, false)
+                    setVisible(hintText, true)
+                })
+
+                return div(cls("tutorial-content-block tutorial-hint-block"),
+                    revealButton,
+                    hintText,
+                ).render()
+            }
+
             case "truthTable": {
                 const wrapper = div(cls("tutorial-content-block tutorial-truth-table-block")).render()
                 const renderTruthTable = () => {
@@ -117,14 +148,25 @@ export class TutorialContent {
 
             case "doubleTruthTable": {
                 const wrapper = div(cls("tutorial-content-block tutorial-double-truth-table-block")).render()
+                let showRegenerateButton = false
+                let regenerateButton: HTMLButtonElement | undefined
+                const revealRegenerateButton = () => {
+                    showRegenerateButton = true
+                    if (regenerateButton !== undefined) {
+                        setVisible(regenerateButton, true)
+                    }
+                }
                 const renderTruthTables = () => {
                     const dynamicHeaders = typeof block.dynamicHeaders === "function" ? block.dynamicHeaders() : block.dynamicHeaders
                     const referenceHeaders = typeof block.referenceHeaders === "function" ? block.referenceHeaders() : block.referenceHeaders
+                    const simulationTruthTable = this.renderTruthTable(dynamicHeaders, block.dynamicRows(), block.dynamicHighlightedRowIndex?.())
+                    const simulationTitle = div(cls("tutorial-truth-table-title"), "Simulation").render()
+                    simulationTitle.addEventListener("dblclick", revealRegenerateButton)
                     wrapper.innerHTML = ""
                     wrapper.appendChild(div(cls("tutorial-double-truth-table"),
                         div(cls("tutorial-truth-table-panel"),
-                            div(cls("tutorial-truth-table-title"), "Simulation"),
-                            this.renderTruthTable(dynamicHeaders, block.dynamicRows(), block.dynamicHighlightedRowIndex?.()),
+                            simulationTitle,
+                            simulationTruthTable,
                         ),
                         div(cls("tutorial-truth-table-spacer")),
                         div(cls("tutorial-truth-table-panel"),
@@ -132,6 +174,16 @@ export class TutorialContent {
                             this.renderTruthTable(referenceHeaders, block.referenceRows()),
                         ),
                     ).render())
+                    if (block.regenerateSimulationTruthTable !== undefined) {
+                        regenerateButton = button(
+                            type("button"),
+                            cls("tutorial-next-button tutorial-truth-table-regenerate-button"),
+                            "Simuler le circuit",
+                        ).render()
+                        regenerateButton.addEventListener("click", () => block.regenerateSimulationTruthTable?.())
+                        setVisible(regenerateButton, showRegenerateButton)
+                        wrapper.appendChild(regenerateButton)
+                    }
                 }
                 renderTruthTables()
                 this.refreshDynamicBlocks.push(renderTruthTables)

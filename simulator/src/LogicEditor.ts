@@ -242,6 +242,7 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
     private _loadedFromStorage: boolean = false
     private _initialData: InitialData | undefined = undefined
     private _options: EditorOptions = { ...DEFAULT_EDITOR_OPTIONS }
+    private _temporaryPropagationDelay: number | undefined = undefined
     private _hideResetButton = false
     private _hideDirtyIndicator = false
     public get hideDirtyIndicator() { return this._hideDirtyIndicator }
@@ -368,6 +369,20 @@ export class LogicEditor extends HTMLElement implements DrawableParent {
 
     public get options(): Readonly<EditorOptions> {
         return this._options
+    }
+
+    public get propagationDelay(): number {
+        return this._temporaryPropagationDelay ?? this._options.propagationDelay
+    }
+
+    public async withTemporaryPropagationDelay<T>(propagationDelay: number, action: () => Promise<T>): Promise<T> {
+        const oldTemporaryPropagationDelay = this._temporaryPropagationDelay
+        this._temporaryPropagationDelay = propagationDelay
+        try {
+            return await action()
+        } finally {
+            this._temporaryPropagationDelay = oldTemporaryPropagationDelay
+        }
     }
 
     public get documentDisplayName(): string {

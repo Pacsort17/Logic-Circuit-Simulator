@@ -922,6 +922,28 @@ svg text {
   opacity: 0.75;
 }
 
+.tutorial-hint-block {
+  padding: 10px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 4px;
+  background-color: rgba(127, 127, 127, 0.18);
+  text-align: center;
+}
+
+.tutorial-hint-button {
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+  color: inherit;
+  background-color: rgba(255, 255, 255, 0.45);
+  font-weight: bold;
+}
+
+.tutorial-hint-text {
+  text-align: left;
+}
+
 .tutorial-checklist {
   margin: 0 20px 12px 20px;
   padding: 10px 12px;
@@ -1050,6 +1072,11 @@ svg text {
   font-size: 85%;
   font-weight: bold;
   opacity: 0.8;
+}
+
+.tutorial-truth-table-regenerate-button {
+  display: block;
+  margin: 10px auto 0;
 }
 
 .tutorial-truth-table th,
