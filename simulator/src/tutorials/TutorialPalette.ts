@@ -87,8 +87,11 @@ export class TutorialPalette {
         this.tutorialDefinitions = [
             this.createInverterTutorial(),
             this.createCompoundLogicTutorial(),
+            this.createAutonomousLogicTutorial(),
+            this.createTwoOutputAutonomousLogicTutorial(),
             this.createPixelTutorial(),
             this.createTwoBitPixelTutorial(),
+            this.createTruthTableWarmupTutorial(),
             this.createThreeBitPixelChallengeTutorial(),
         ]
 
@@ -468,6 +471,23 @@ export class TutorialPalette {
         return this.truthTableTestState === "passed"
     }
 
+    private hasDynamicTruthTableMatching(headers: readonly string[], rows: DynamicTruthTableCell[][]): boolean {
+        if (!this.dynamicTruthTableHasInputsAndOutputs) {
+            return false
+        }
+        if (
+            this.dynamicTruthTableHeaders.length !== headers.length
+            || this.dynamicTruthTableHeaders.some((header, index) => header !== headers[index])
+            || this.dynamicTruthTableRows.length !== rows.length
+        ) {
+            return false
+        }
+        return rows.every((row, rowIndex) =>
+            row.length === this.dynamicTruthTableRows[rowIndex].length
+            && row.every((cell, colIndex) => cell === this.dynamicTruthTableRows[rowIndex][colIndex])
+        )
+    }
+
     private resetTruthTableTest() {
         this.truthTableTestState = "unknown"
         this.truthTableTestRunId++
@@ -686,8 +706,27 @@ export class TutorialPalette {
             .length >= count
     }
 
+    private hasPlacedGateTotalCount(count: number): boolean {
+        return this.placedComponents()
+            .filter(comp => comp instanceof GateBase)
+            .length === count
+    }
+
     private hasNoPlacedComponents(): boolean {
         return this.placedComponents().length === 0
+    }
+
+    private hasOnlyNamedInputsAndOutputs(inputNames: readonly string[], outputNames: readonly string[]): boolean {
+        const components = this.placedComponents()
+        const inputs = components.filter(comp => this.isInputComponent(comp))
+        const outputs = components.filter(comp => this.isOutputComponent(comp))
+        return (
+            inputs.length === inputNames.length
+            && outputs.length === outputNames.length
+            && inputs.length + outputs.length === components.length
+            && inputNames.every(name => inputs.some(input => input.name === name))
+            && outputNames.every(name => outputs.some(output => output.name === name))
+        )
     }
 
     private hasPlacedComponentMatching(matcher: TutorialComponentMatcher): boolean {
@@ -890,13 +929,13 @@ export class TutorialPalette {
                     new TutorialImageBlock("simulator/img/Input1.svg", "Symbole d’entrée", "Entrée"),
                     new TutorialParagraphBlock('Cliquez sur l\'icône pour en faire apparaître une sur le canevas.'),
                     new TutorialParagraphBlock("Vous pouvez ensuite déplacer cette entrée (cliquez dessus et maintenez le clic enfoncé durant le déplacement)."),
-                    new TutorialParagraphBlock('Pour renommer l’entrée, cliquez dessus avec deux doigts, sélectionnez le menu "Set Name...". Nommez cette entrée "A".'),
+                    new TutorialParagraphBlock('Pour renommer l’entrée, cliquez dessus avec deux doigts, sélectionnez le menu "Ajouter un nom...". Nommez cette entrée "A".'),
                 ], [
                     new TutorialObjective('Placer une entrée', () => this.hasPlacedComponent(ComponentTypeInput)),
                     new TutorialObjective('Renommer l’entrée en "A"', () => this.hasInputNamed("A")),
                 ]),
                 new TutorialStep([
-                    new TutorialParagraphBlock('Ajoutez maintenant la porte logique Non. Elle s’appelle "Not" et se trouve dans la partie "Gates" de la barre de gauche.'),
+                    new TutorialParagraphBlock('Ajoutez maintenant la porte logique Non. Elle s’appelle "Non" et se trouve dans la partie "Portes" de la barre de gauche.'),
                     new TutorialImageBlock("simulator/img/not.svg", "Porte logique NON", "Porte non"),
                     new TutorialParagraphBlock('Cliquez sur la porte "Not" pour la faire apparaître, puis déplacez-la à droite de l’entrée A.'),
                     new TutorialParagraphBlock("Pour relier l’entrée à la porte, cliquez sur le point situé à droite de l’entrée, maintenez le clic, puis amenez le fil qui apparaît jusqu’au point situé à gauche de la porte Non."),
@@ -916,10 +955,10 @@ export class TutorialPalette {
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock("Le simulateur propose plusieurs outils pour vous aider à dessiner des circuits logiques, trouvables dans la barre en haut du simulateur."),
-                    new TutorialParagraphBlock('"Undo/Redo" permet d’annuler la dernière action ou de rétablir une action qui vient d’être annulée.'),
-                    new TutorialParagraphBlock('"Design" permet de revenir au mode normal pour créer, déplacer et modifier les composants du circuit.'),
-                    new TutorialParagraphBlock('"Delete" permet de passer en mode suppression : cliquez ensuite sur un composant ou un fil pour le supprimer.'),
-                    new TutorialParagraphBlock('L’icône avec quatre flèches tout à droite permet de déplacer tout le circuit sur le canevas.'),
+                    new TutorialParagraphBlock('"Annuler/Rétablir" permet d’annuler la dernière action ou de rétablir une action qui vient d’être annulée.'),
+                    new TutorialParagraphBlock('"Concevoir" permet de revenir au mode normal pour créer, déplacer et modifier les composants du circuit.'),
+                    new TutorialParagraphBlock('"Supprimer" permet de passer en mode suppression : cliquez ensuite sur un composant ou un fil pour le supprimer.'),
+                    new TutorialParagraphBlock('L’icône avec quatre flèches tout à droite permet de déplacer tout le circuit.'),
                     new TutorialParagraphBlock('Le nombre à droite correspond au zoom : changez ce nombre pour agrandir ou réduire l’affichage du circuit.'),
                     new TutorialParagraphBlock('Manipulez ces différents outils pour voir leurs effets, et utilisez "Undo" pour annuler la suppression de la porte non.'),
                 ], [
@@ -932,7 +971,7 @@ export class TutorialPalette {
                 new TutorialStep([
                     new TutorialParagraphBlock('Ajoutez maintenant une sortie : le composant se nomme "out" et se trouve lui aussi dans la barre de gauche. Placez cette sortie à droite de la porte Non.'),
                     new TutorialImageBlock("simulator/img/Output1.svg", "Symbole de sortie", "Sortie"),
-                    new TutorialParagraphBlock('Renommez la sortie en cliquant dessus avec deux doigts, puis en sélectionnant "Set Name...". Nommez cette sortie "Y".'),
+                    new TutorialParagraphBlock('Renommez la sortie en cliquant dessus avec deux doigts, puis en sélectionnant "Ajouter un nom...". Nommez cette sortie "Y".'),
                     new TutorialParagraphBlock("Enfin, reliez la porte Non à la sortie Y (cliquez sur le point situé à droite de la porte Non et maintenez le clic pendant le déplacement pour créer le fil et l'amener jusqu’au point situé à gauche de la sortie Y)."),
                 ], [
                     new TutorialObjective('Placer une sortie', () => this.hasPlacedComponent(ComponentTypeOutput)),
@@ -1020,7 +1059,7 @@ export class TutorialPalette {
                     new TutorialObjective('Relier l’entrée C à la porte non', () => this.hasPlacedComponentMatching(notC)),
                 ]),
                 new TutorialStep([
-                    new TutorialParagraphBlock('Créez une porte Et (Porte logique "And" dans la partie "Gates" de la barre à gauche).'),
+                    new TutorialParagraphBlock('Créez une porte Et (Porte logique "Et" dans la partie "Portes" de la barre à gauche).'),
                     new TutorialImageBlock("simulator/img/and.svg", "Porte logique ET", "Porte et"),
                     new TutorialParagraphBlock("Reliez l’entrée B et la sortie de C̅ à cette porte Et."),
                 ], [
@@ -1035,7 +1074,7 @@ export class TutorialPalette {
                     new TutorialObjective('Relier l’entrée A à la deuxième porte non', () => this.hasPlacedComponentMatching(notA)),
                 ]),
                 new TutorialStep([
-                    new TutorialParagraphBlock('Créez une porte Ou ("Or").'),
+                    new TutorialParagraphBlock('Créez une porte Ou.'),
                     new TutorialImageBlock("simulator/img/or.svg", "Porte logique OU", "Porte ou"),
                     new TutorialParagraphBlock("Reliez A̅ et le résultat de (B et C̅) à cette porte Ou."),
                 ], [
@@ -1072,6 +1111,148 @@ export class TutorialPalette {
             referenceTruthTableRows,
         )
     }
+    
+
+    private createAutonomousLogicTutorial(): TutorialDefinition {
+        const referenceTruthTableHeaders: readonly string[] = ["A", "B", "C", "Y"]
+        const referenceTruthTableRows: DynamicTruthTableCell[][] = [
+            [0, 0, 0, 0],
+            [0, 0, 1, 1],
+            [0, 1, 0, 1],
+            [0, 1, 1, 1],
+            [1, 0, 0, 0],
+            [1, 0, 1, 1],
+            [1, 1, 0, 0],
+            [1, 1, 1, 1],
+        ]
+        const inputA: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "A" }
+        const inputB: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "B" }
+        const inputC: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "C" }
+        const outputY: TutorialComponentMatcher = { componentType: ComponentTypeOutput, name: "Y" }
+        const andAB: TutorialComponentMatcher = { gateType: "and", inputs: [inputA, inputB] }
+        const orAndABC: TutorialComponentMatcher = { gateType: "or", inputs: [andAB, inputC] }
+        const notC: TutorialComponentMatcher = { gateType: "not", inputs: [inputC] }
+        const andBNotC: TutorialComponentMatcher = { gateType: "and", inputs: [inputB, notC] }
+        const finalXor: TutorialComponentMatcher = { gateType: "xor", inputs: [orAndABC, andBNotC] }
+
+        return new TutorialDefinition(
+            "autonomous-logic-circuit",
+            "Dessinez le circuit Y = ((A et B) ou C) xor (B et C̅)",
+            "Dessinez un circuit logique à trois entrées et une sortie.",
+            () => [
+                new TutorialStep([
+                    new TutorialParagraphBlock("Vous allez maintenant dessiner le circuit correspondant à la fonction logique Y = ((A et B) ou C) xor (B et C̅)."),
+                    new TutorialParagraphBlock('Commencez par supprimer tous les composants présents. Conservez uniquement trois entrées nommées "A", "B" et "C", ainsi qu’une sortie nommée "Y".'),
+                ], [
+                    new TutorialObjective('Créer l’entrée "A"', () => this.hasInputNamed("A")),
+                    new TutorialObjective('Créer l’entrée "B"', () => this.hasInputNamed("B")),
+                    new TutorialObjective('Créer l’entrée "C"', () => this.hasInputNamed("C")),
+                    new TutorialObjective('Créer la sortie "Y"', () => this.hasOutputNamed("Y")),
+                    new TutorialObjective("Supprimer tout autre composant", () => this.hasOnlyNamedInputsAndOutputs(["A", "B", "C"], ["Y"])),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Dessinez maintenant le circuit correspondant à Y."),
+                    new TutorialDoubleTruthTableBlock(
+                        () => this.dynamicTruthTableHeaders,
+                        () => this.dynamicTruthTableRows,
+                        referenceTruthTableHeaders,
+                        () => referenceTruthTableRows,
+                        () => this.dynamicTruthTableHighlightedRowIndex,
+                        () => this.regenerateSimulationTruthTable(),
+                    ),
+                    new TutorialParagraphBlock("La table de gauche est calculée par la simulation de votre circuit."),
+                    new TutorialParagraphBlock("La table de droite est la référence attendue pour Y."),
+                    new TutorialParagraphBlock("Si les deux tables sont identiques, votre circuit est correct."),
+                ], [
+                    new TutorialObjective("Relier le circuit complet à la sortie Y", () => this.hasPlacedWireBetween(finalXor, outputY)),
+                    new TutorialObjective("Les deux tables de vérité sont identiques", () => this.hasValidTruthTable()),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Vous avez dessiné votre premier circuit en autonomie !"),
+                    new TutorialParagraphBlock("Vous savez maintenant traduire une fonction logique en circuit, puis vérifier votre résultat avec une table de vérité."),
+                ], []),
+            ],
+            1,
+            referenceTruthTableHeaders,
+            referenceTruthTableRows,
+        )
+    }
+
+    
+
+    private createTwoOutputAutonomousLogicTutorial(): TutorialDefinition {
+        const referenceTruthTableHeaders: readonly string[] = ["A", "B", "C", "Y", "Z"]
+        const referenceTruthTableRows: DynamicTruthTableCell[][] = [
+            [0, 0, 0, 0, 0],
+            [0, 0, 1, 1, 1],
+            [0, 1, 0, 0, 1],
+            [0, 1, 1, 0, 0],
+            [1, 0, 0, 1, 1],
+            [1, 0, 1, 0, 1],
+            [1, 1, 0, 0, 1],
+            [1, 1, 1, 0, 0],
+        ]
+        const inputA: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "A" }
+        const inputB: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "B" }
+        const inputC: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "C" }
+        const outputY: TutorialComponentMatcher = { componentType: ComponentTypeOutput, name: "Y" }
+        const outputZ: TutorialComponentMatcher = { componentType: ComponentTypeOutput, name: "Z" }
+        const notB: TutorialComponentMatcher = { gateType: "not", inputs: [inputB] }
+        const andANotB: TutorialComponentMatcher = { gateType: "and", inputs: [inputA, notB] }
+        const andNotBC: TutorialComponentMatcher = { gateType: "and", inputs: [notB, inputC] }
+        const finalY: TutorialComponentMatcher = { gateType: "xor", inputs: [andANotB, andNotBC] }
+        const xorBC: TutorialComponentMatcher = { gateType: "xor", inputs: [inputB, inputC] }
+        const finalZ: TutorialComponentMatcher = { gateType: "or", inputs: [andANotB, xorBC] }
+
+        return new TutorialDefinition(
+            "two-output-autonomous-logic-circuit",
+            "Dessinez deux circuits logiques",
+            "Dessinez un circuit logique à trois entrées et deux sorties.",
+            () => [
+                new TutorialStep([
+                    new TutorialParagraphBlock("Vous allez maintenant dessiner deux circuits correspondant aux fonctions logiques :"),
+                    new TutorialParagraphBlock("Y = (A et B̅) xor (B̅ et C)"),
+                    new TutorialParagraphBlock("Z = (A et B̅) ou (B xor C)"),
+                    new TutorialParagraphBlock('Commencez par supprimer tous les composants présents. Conservez uniquement trois entrées nommées "A", "B" et "C", ainsi que deux sorties nommées "Y" et "Z".'),
+                ], [
+                    new TutorialObjective('Créer l’entrée "A"', () => this.hasInputNamed("A")),
+                    new TutorialObjective('Créer l’entrée "B"', () => this.hasInputNamed("B")),
+                    new TutorialObjective('Créer l’entrée "C"', () => this.hasInputNamed("C")),
+                    new TutorialObjective('Créer la sortie "Y"', () => this.hasOutputNamed("Y")),
+                    new TutorialObjective('Créer la sortie "Z"', () => this.hasOutputNamed("Z")),
+                    new TutorialObjective("Supprimer tout autre composant", () => this.hasOnlyNamedInputsAndOutputs(["A", "B", "C"], ["Y", "Z"])),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Dessinez maintenant les circuits correspondant à Y et Z."),
+                    new TutorialParagraphBlock("Y = (A et B̅) xor (B̅ et C)"),
+                    new TutorialParagraphBlock("Z = (A et B̅) ou (B xor C)"),
+                    new TutorialDoubleTruthTableBlock(
+                        () => this.dynamicTruthTableHeaders,
+                        () => this.dynamicTruthTableRows,
+                        referenceTruthTableHeaders,
+                        () => referenceTruthTableRows,
+                        () => this.dynamicTruthTableHighlightedRowIndex,
+                        () => this.regenerateSimulationTruthTable(),
+                    ),
+                    new TutorialParagraphBlock("Attention, vous devez utiliser exactement 6 portes pour dessiner les deux circuits."),
+                    new TutorialParagraphBlock("Sachez que vous pouvez tirer plusieurs fils depuis une même entrée (et depuis la même sortie d'une porte).")
+                ], [
+                    new TutorialObjective("Utiliser exactement 6 portes", () => this.hasPlacedGateTotalCount(6)),
+                    new TutorialObjective("Relier le circuit complet à la sortie Y", () => this.hasPlacedWireBetween(finalY, outputY)),
+                    new TutorialObjective("Relier le circuit complet à la sortie Z", () => this.hasPlacedWireBetween(finalZ, outputZ)),
+                    new TutorialObjective("Les deux tables de vérité sont identiques", () => this.hasValidTruthTable()),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Vous avez dessiné votre premier circuit à deux sorties !"),
+                    new TutorialParagraphBlock("Vous savez maintenant partager des morceaux de circuit entre plusieurs sorties."),
+                ], []),
+            ],
+            1,
+            referenceTruthTableHeaders,
+            referenceTruthTableRows,
+        )
+    }
+
 
     private createPixelTutorial(): TutorialDefinition {
         const pixelComponentType = "pixel"
@@ -1103,7 +1284,7 @@ export class TutorialPalette {
                     new TutorialObjective("Supprimer tous les composants présents", () => this.hasNoPlacedComponents()),
                 ]),
                 new TutorialStep([
-                    new TutorialParagraphBlock('Dans la section "Inputs/Outputs" de la barre de gauche, cliquez sur "More" pour afficher les composants supplémentaires.'),
+                    new TutorialParagraphBlock('Dans la section "Entrées/sorties" de la barre de gauche, cliquez sur "Plus" pour afficher les composants supplémentaires.'),
                     new TutorialImageBlock("simulator/img/Pixel.svg", "Symbole du pixel", "Pixel"),
                     new TutorialParagraphBlock('Cliquez ensuite sur le composant "Pixel" pour l’ajouter.'),
                 ], [
@@ -1145,18 +1326,18 @@ export class TutorialPalette {
                     new TutorialParagraphBlock("Voici ce que doit faire le circuit : si X = 0, le pixel est bleu; si X = 1, le pixel est rouge."),
                     new TutorialTruthTableBlock(colorTruthTableHeaders, () => colorTruthTableRows),
                     new TutorialParagraphBlock("La table utilise une entrée X et trois sorties R, G et B, qui correspondent aux trois composantes du pixel."),
-                    new TutorialParagraphBlock("On peut tirer plusieurs fils depuis une même entrée : l’entrée X pourra donc servir à plusieurs endroits du circuit."),
-                    new TutorialParagraphBlock('Créez maintenant une entrée et nommez-la "A".'),
+                    new TutorialParagraphBlock("Rappel : on peut tirer plusieurs fils depuis une même entrée (l’entrée X pourra donc servir à plusieurs endroits du circuit)."),
+                    new TutorialParagraphBlock('Créez maintenant une entrée et nommez-la "X".'),
                 ], [
-                    new TutorialObjective('Créer l’entrée "X"', () => this.hasInputNamed("A")),
+                    new TutorialObjective('Créer l’entrée "X"', () => this.hasInputNamed("X")),
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock("Commençons par la composante rouge."),
                     new TutorialTruthTableBlock(colorTruthTableHeaders, () => colorTruthTableRows),
-                    new TutorialParagraphBlock("La colonne R est exactement la même que la colonne A."),
+                    new TutorialParagraphBlock("La colonne R est exactement la même que la colonne X."),
                     new TutorialParagraphBlock("Il suffit donc de relier directement X à la composante rouge du pixel, c'est-à-dire l'entrée en haut du pixel."),
                 ], [
-                    new TutorialObjective("Relier X à la composante rouge du pixel", () => hasInputConnectedToPixel("A", "R")),
+                    new TutorialObjective("Relier X à la composante rouge du pixel", () => hasInputConnectedToPixel("X", "R")),
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock("Passons à la composante bleue."),
@@ -1171,7 +1352,7 @@ export class TutorialPalette {
                 new TutorialStep([
                     new TutorialParagraphBlock("Finissons par la composante verte."),
                     new TutorialTruthTableBlock(colorTruthTableHeaders, () => colorTruthTableRows),
-                    new TutorialParagraphBlock("Quelle que soit la valeur de A, la variable G vaut toujours 0."),
+                    new TutorialParagraphBlock("Quelle que soit la valeur de X, la variable G vaut toujours 0."),
                     new TutorialParagraphBlock("Pour obtenir ce 0, vous pouvez utiliser une porte Xor."),
                     new TutorialImageBlock("simulator/img/xor.svg", "Porte logique XOR", "Porte xor"),
                     new TutorialParagraphBlock("Si les deux entrées d’une porte Xor ont la même valeur, son résultat vaut 0."),
@@ -1264,6 +1445,105 @@ export class TutorialPalette {
         )
     }
 
+    
+
+    private createTruthTableWarmupTutorial(): TutorialDefinition {
+        const warmupTruthTableHeaders: readonly string[] = ["A", "B", "Y"]
+        const warmupAndNotBTruthTableRows: DynamicTruthTableCell[][] = [
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 1, 0],
+        ]
+        const warmupOrNotBTruthTableRows: DynamicTruthTableCell[][] = [
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 1, 1],
+        ]
+        const inputA: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "A" }
+        const inputB: TutorialComponentMatcher = { componentType: ComponentTypeInput, name: "B" }
+        const outputY: TutorialComponentMatcher = { componentType: ComponentTypeOutput, name: "Y" }
+        const warmupAndAB: TutorialComponentMatcher = { gateType: "and", inputs: [inputA, inputB] }
+        const warmupNotB: TutorialComponentMatcher = { gateType: "not", inputs: [inputB] }
+        const warmupAndANotB: TutorialComponentMatcher = { gateType: "and", inputs: [inputA, warmupNotB] }
+        const warmupOrANotB: TutorialComponentMatcher = { gateType: "or", inputs: [inputA, warmupNotB] }
+
+        return new TutorialDefinition(
+            "truth-table-to-logic-warmup",
+            "Échauffement du défi",
+            "Retrouvez une fonction logique à partir d’une table de vérité.",
+            () => [
+                new TutorialStep([
+                    new TutorialParagraphBlock("Vous allez voir comment retrouver une fonction logique à partir de la table de vérité."),
+                    new TutorialParagraphBlock('Commencez par créer deux variables d’entrée nommées "A" et "B", et une variable de sortie nommée "Y". Supprimez tout autre composant avant de continuer.'),
+                ], [
+                    new TutorialObjective('Créer l’entrée "A"', () => this.hasInputNamed("A")),
+                    new TutorialObjective('Créer l’entrée "B"', () => this.hasInputNamed("B")),
+                    new TutorialObjective('Créer la sortie "Y"', () => this.hasOutputNamed("Y")),
+                    new TutorialObjective("Supprimer tout autre composant", () => this.hasOnlyNamedInputsAndOutputs(["A", "B"], ["Y"])),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Voici une table de vérité."),
+                    new TutorialDoubleTruthTableBlock(
+                        () => this.dynamicTruthTableHeaders,
+                        () => this.dynamicTruthTableRows,
+                        warmupTruthTableHeaders,
+                        () => warmupAndNotBTruthTableRows,
+                        () => this.dynamicTruthTableHighlightedRowIndex,
+                        () => this.regenerateSimulationTruthTable(),
+                    ),
+                    new TutorialParagraphBlock("Ici, Y vaut 1 dans un seul cas : A = 1, B = 0."),
+                    new TutorialParagraphBlock("Vous connaissez une seule fonction logique où la sortie vaut 1 dans un seul cas : la fonction Et."),
+                    new TutorialParagraphBlock("Posez une porte Et, puis reliez A et B à cette porte, et la porte Et à la sortie Y."),
+                ], [
+                    new TutorialObjective("Relier A et B à une porte Et", () => this.hasPlacedComponentMatching(warmupAndAB)),
+                    new TutorialObjective("Relier la porte Et à la sortie Y", () => this.hasPlacedWireBetween(warmupAndAB, outputY)),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Cependant, les deux tables de vérité ne sont pas les mêmes."),
+                    new TutorialDoubleTruthTableBlock(
+                        () => this.dynamicTruthTableHeaders,
+                        () => this.dynamicTruthTableRows,
+                        warmupTruthTableHeaders,
+                        () => warmupAndNotBTruthTableRows,
+                        () => this.dynamicTruthTableHighlightedRowIndex,
+                        () => this.regenerateSimulationTruthTable(),
+                    ),
+                    new TutorialParagraphBlock("Actuellement, la sortie de votre circuit est égale à 1 quand A vaut 1 et B vaut 1."),
+                    new TutorialParagraphBlock("Pour changer cela, posez une porte Non après l’entrée B. La sortie de votre circuit ne sera égale à 1 que quand A vaut 1 et B vaut 0."),
+                ], [
+                    new TutorialObjective("Relier B à une porte Non", () => this.hasPlacedComponentMatching(warmupNotB)),
+                    new TutorialObjective("Relier A et B̅ à la porte Et", () => this.hasPlacedComponentMatching(warmupAndANotB)),
+                    new TutorialObjective("Relier le circuit à la sortie Y", () => this.hasPlacedWireBetween(warmupAndANotB, outputY)),
+                    new TutorialObjective("Les deux tables de vérité sont identiques", () => this.hasDynamicTruthTableMatching(warmupTruthTableHeaders, warmupAndNotBTruthTableRows)),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Maintenant, voyons si vous avez compris : dessinez le circuit correspondant à la table de vérité suivante."),
+                    new TutorialDoubleTruthTableBlock(
+                        () => this.dynamicTruthTableHeaders,
+                        () => this.dynamicTruthTableRows,
+                        warmupTruthTableHeaders,
+                        () => warmupOrNotBTruthTableRows,
+                        () => this.dynamicTruthTableHighlightedRowIndex,
+                        () => this.regenerateSimulationTruthTable(),
+                    ),
+                    new TutorialHintBlock("Vous avez besoin d’une porte Ou et d’une porte Non."),
+                ], [
+                    new TutorialObjective("Les deux tables de vérité sont identiques", () => this.hasDynamicTruthTableMatching(warmupTruthTableHeaders, warmupOrNotBTruthTableRows)),
+                ]),
+                new TutorialStep([
+                    new TutorialParagraphBlock("Bravo, vous savez maintenant retrouver une fonction logique à partir d’une table de vérité : s’il y a un seul 1, utilisez une porte Et; s’il y a deux 1, utilisez une porte Xor; et s’il y a trois 1, utilisez une porte Ou."),
+                    new TutorialParagraphBlock("Vous êtes maintenant paré à affronter le défi !"),
+                ], []),
+            ],
+            1,
+            warmupTruthTableHeaders,
+            warmupAndNotBTruthTableRows,
+        )
+    }
+
+
     private createThreeBitPixelChallengeTutorial(): TutorialDefinition {
         const pixelComponentType = "pixel"
         const referenceTruthTableHeaders: readonly string[] = ["W", "X", "Z", "R", "G", "B"]
@@ -1315,7 +1595,7 @@ export class TutorialPalette {
                     new TutorialParagraphBlock(" - 5 (101) -> Vert"),
                     new TutorialParagraphBlock(" - 6 (111) -> Blanc"),
                     new TutorialParagraphBlock(" - 7 (110) -> Jaune"),
-                    new TutorialParagraphBlock("La table de vérité est donc composée detrois entrées (W, X et Z) et de trois sorties (R, G et B)."),
+                    new TutorialParagraphBlock("La table de vérité est donc composée de trois entrées (W, X et Z) et de trois sorties (R, G et B)."),
                     new TutorialTruthTableBlock(referenceTruthTableHeaders, () => referenceTruthTableRows),
                     new TutorialParagraphBlock('Créez maintenant trois entrées nommées "W", "X" et "Z", puis trois sorties nommées "R", "G" et "B". Supprimez tout autre composant avant de continuer.'),
                 ], [
