@@ -936,12 +936,12 @@ export class TutorialPalette {
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock('Ajoutez maintenant la porte logique Non. Elle s’appelle "Non" et se trouve dans la partie "Portes" de la barre de gauche.'),
-                    new TutorialImageBlock("simulator/img/not.svg", "Porte logique NON", "Porte non"),
-                    new TutorialParagraphBlock('Cliquez sur la porte "Not" pour la faire apparaître, puis déplacez-la à droite de l’entrée A.'),
+                    new TutorialImageBlock("simulator/img/not.svg", "Porte logique NON", "Porte Non"),
+                    new TutorialParagraphBlock('Cliquez sur la porte "Non" pour la faire apparaître, puis déplacez-la à droite de l’entrée A.'),
                     new TutorialParagraphBlock("Pour relier l’entrée à la porte, cliquez sur le point situé à droite de l’entrée, maintenez le clic, puis amenez le fil qui apparaît jusqu’au point situé à gauche de la porte Non."),
                 ], [
-                    new TutorialObjective('Placer une porte non', () => this.hasPlacedGate("not")),
-                    new TutorialObjective('Relier l’entrée A à la porte non', () => this.hasPlacedWireBetween(
+                    new TutorialObjective('Placer une porte Non', () => this.hasPlacedGate("not")),
+                    new TutorialObjective('Relier l’entrée A à la porte Non', () => this.hasPlacedWireBetween(
                         { componentType: ComponentTypeInput },
                         { gateType: "not" },
                     )),
@@ -1060,11 +1060,11 @@ export class TutorialPalette {
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock('Créez une porte Et (Porte logique "Et" dans la partie "Portes" de la barre à gauche).'),
-                    new TutorialImageBlock("simulator/img/and.svg", "Porte logique ET", "Porte et"),
+                    new TutorialImageBlock("simulator/img/and.svg", "Porte logique ET", "Porte Et"),
                     new TutorialParagraphBlock("Reliez l’entrée B et la sortie de C̅ à cette porte Et."),
                 ], [
-                    new TutorialObjective('Placer une porte et', () => this.hasPlacedGate("and")),
-                    new TutorialObjective('Relier B et C̅ à la porte et', () => this.hasPlacedComponentMatching(andBNotC)),
+                    new TutorialObjective('Placer une porte Et', () => this.hasPlacedGate("and")),
+                    new TutorialObjective('Relier B et C̅ à la porte Et', () => this.hasPlacedComponentMatching(andBNotC)),
                 ]),
                 new TutorialStep([
                     new TutorialParagraphBlock('Créez une deuxième porte Non.'),
